@@ -38,6 +38,11 @@ pub enum Effect {
 /// before playback starts.
 pub const WINDOW: usize = 25;
 
+/// How far a status poll may disagree with the locally running clock before the
+/// clock is re-anchored to it. Polls arrive tens of milliseconds late, so
+/// re-anchoring on every one made the seconds counter hiccup.
+pub const CLOCK_TOLERANCE_SECS: f64 = 0.5;
+
 pub fn reduce(app: &mut App, action: Action) -> Vec<Effect> {
     match action {
         Action::Key(key) => on_key(app, key),
@@ -95,16 +100,34 @@ fn on_bridge(app: &mut App, ev: Event) -> Vec<Effect> {
                 }
             }
             let mut s = s;
-            if app
+            let optimistic = app
                 .optimistic_at
-                .is_some_and(|t| t.elapsed() < OPTIMISTIC_WINDOW)
-            {
+                .is_some_and(|t| t.elapsed() < OPTIMISTIC_WINDOW);
+            if optimistic {
                 s.volume = app.status.volume;
                 s.shuffle = app.status.shuffle;
                 s.repeat = app.status.repeat;
             }
+            // Keep the local clock (state, position and its timestamp) when the
+            // poll predates a local play/pause/seek, or when it merely confirms
+            // a running clock within tolerance. Anything else re-anchors.
+            let same_track = s.track_id == app.status.track_id;
+            let local_playing = app.status.state == PlayerState::Playing;
+            let keep_clock = same_track
+                && if optimistic {
+                    s.state != app.status.state || local_playing
+                } else {
+                    local_playing
+                        && s.state == PlayerState::Playing
+                        && (s.position_secs - app.position_now()).abs() < CLOCK_TOLERANCE_SECS
+                };
+            if keep_clock {
+                s.state = app.status.state;
+                s.position_secs = app.status.position_secs;
+            } else {
+                app.status_at = Instant::now();
+            }
             app.status = s;
-            app.status_at = Instant::now();
             let playing = app.status.state == PlayerState::Playing;
             if playing != was_playing {
                 effects.push(Effect::Viz(Control::Playing(playing)));
@@ -119,6 +142,16 @@ fn on_bridge(app: &mut App, ev: Event) -> Vec<Effect> {
         Event::Error(e) => app.notify(e),
     }
     Vec::new()
+}
+
+/// Move the local clock by `delta` seconds now and ask Music.app to follow.
+fn seek_by(app: &mut App, delta: f64) -> Vec<Effect> {
+    let pos = (app.position_now() + delta).max(0.0);
+    let now = Instant::now();
+    app.status.position_secs = pos;
+    app.status_at = now;
+    app.optimistic_at = Some(now);
+    vec![Effect::Send(Command::Seek(pos))]
 }
 
 /// Request album art when the current track's album differs from the one
@@ -208,17 +241,31 @@ fn on_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
             app.view_mut().filter.clear();
             app.view_mut().cursor = 0;
         }
-        KeyCode::Char(' ') => return vec![Effect::Send(Command::PlayPause)],
+        KeyCode::Char(' ') => {
+            // Flip the local clock now; the poll after the command confirms it.
+            let now = Instant::now();
+            let playing = match app.status.state {
+                PlayerState::Playing => {
+                    app.status.position_secs = app.position_now();
+                    app.status.state = PlayerState::Paused;
+                    false
+                }
+                _ => {
+                    app.status.state = PlayerState::Playing;
+                    true
+                }
+            };
+            app.status_at = now;
+            app.optimistic_at = Some(now);
+            return vec![
+                Effect::Send(Command::PlayPause),
+                Effect::Viz(Control::Playing(playing)),
+            ];
+        }
         KeyCode::Char('n') => return vec![Effect::Send(Command::Next)],
         KeyCode::Char('p') => return vec![Effect::Send(Command::Previous)],
-        KeyCode::Right => {
-            let pos = (app.position_now() + 5.0).max(0.0);
-            return vec![Effect::Send(Command::Seek(pos))];
-        }
-        KeyCode::Left => {
-            let pos = (app.position_now() - 5.0).max(0.0);
-            return vec![Effect::Send(Command::Seek(pos))];
-        }
+        KeyCode::Right => return seek_by(app, 5.0),
+        KeyCode::Left => return seek_by(app, -5.0),
         KeyCode::Char('+') | KeyCode::Char('=') => {
             app.optimistic_at = Some(Instant::now());
             app.status.volume = app.status.volume.saturating_add(5).min(100);
@@ -416,6 +463,8 @@ fn drill(app: &mut App, into: Drill) -> Vec<Effect> {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
     use crate::config::VizSettings;
     use crate::config::theme::Theme;
@@ -724,7 +773,10 @@ mod tests {
         let mut a = app();
         assert_eq!(
             reduce(&mut a, key(' ')),
-            vec![Effect::Send(Command::PlayPause)]
+            vec![
+                Effect::Send(Command::PlayPause),
+                Effect::Viz(Control::Playing(true)),
+            ]
         );
         assert_eq!(reduce(&mut a, key('n')), vec![Effect::Send(Command::Next)]);
         assert_eq!(
@@ -747,14 +799,12 @@ mod tests {
             reduce(&mut a, key('r')),
             vec![Effect::Send(Command::SetRepeat(RepeatMode::All))]
         );
-        assert_eq!(
-            reduce(&mut a, code(KeyCode::Right)),
-            vec![Effect::Send(Command::Seek(5.0))]
-        );
-        assert_eq!(
-            reduce(&mut a, code(KeyCode::Left)),
-            vec![Effect::Send(Command::Seek(0.0))]
-        );
+        // Space above started the local clock, so the seek target is 5 s plus
+        // the few microseconds elapsed since.
+        let fx = reduce(&mut a, code(KeyCode::Right));
+        assert!(matches!(fx[..], [Effect::Send(Command::Seek(p))] if (p - 5.0).abs() < 0.1));
+        let fx = reduce(&mut a, code(KeyCode::Left));
+        assert!(matches!(fx[..], [Effect::Send(Command::Seek(p))] if p.abs() < 0.1));
     }
 
     #[test]
@@ -867,6 +917,135 @@ mod tests {
             })),
         );
         assert!(!fx.iter().any(|e| matches!(e, Effect::LookupArt(_))));
+    }
+
+    fn playing_app(position: f64, secs_ago: u64) -> App {
+        let mut a = app();
+        a.status = PlayerStatus {
+            state: PlayerState::Playing,
+            track_id: Some(id(1)),
+            position_secs: position,
+            ..PlayerStatus::default()
+        };
+        a.status_at = Instant::now() - Duration::from_secs(secs_ago);
+        a
+    }
+
+    fn poll(a: &mut App, state: PlayerState, position: f64) -> Vec<Effect> {
+        reduce(
+            a,
+            Action::Bridge(Event::Status(PlayerStatus {
+                state,
+                track_id: Some(id(1)),
+                position_secs: position,
+                ..PlayerStatus::default()
+            })),
+        )
+    }
+
+    #[test]
+    fn space_pauses_the_clock_immediately() {
+        let mut a = playing_app(10.0, 2);
+        let fx = reduce(&mut a, key(' '));
+        assert_eq!(
+            fx,
+            vec![
+                Effect::Send(Command::PlayPause),
+                Effect::Viz(Control::Playing(false)),
+            ]
+        );
+        assert_eq!(a.status.state, PlayerState::Paused);
+        assert!(
+            (a.position_now() - 12.0).abs() < 0.2,
+            "{}",
+            a.position_now()
+        );
+        assert!(a.optimistic_at.is_some());
+    }
+
+    #[test]
+    fn space_resumes_the_clock_immediately() {
+        let mut a = playing_app(10.0, 2);
+        a.status.state = PlayerState::Paused;
+        reduce(&mut a, key(' '));
+        assert_eq!(a.status.state, PlayerState::Playing);
+        assert!(
+            (a.position_now() - 10.0).abs() < 0.2,
+            "{}",
+            a.position_now()
+        );
+    }
+
+    #[test]
+    fn stale_poll_right_after_space_does_not_flip_state_or_clock() {
+        let mut a = playing_app(10.0, 2);
+        reduce(&mut a, key(' '));
+        poll(&mut a, PlayerState::Playing, 12.3);
+        assert_eq!(a.status.state, PlayerState::Paused);
+        assert!(
+            (a.position_now() - 12.0).abs() < 0.2,
+            "{}",
+            a.position_now()
+        );
+        // A poll that agrees with the toggle is taken as the new anchor.
+        poll(&mut a, PlayerState::Paused, 12.1);
+        assert_eq!(a.status.position_secs, 12.1);
+    }
+
+    #[test]
+    fn poll_close_to_the_local_clock_keeps_the_anchor() {
+        let mut a = playing_app(10.0, 1);
+        let anchor = a.status_at;
+        poll(&mut a, PlayerState::Playing, 10.8);
+        assert_eq!(a.status_at, anchor);
+        assert_eq!(a.status.position_secs, 10.0);
+        assert!(
+            (a.position_now() - 11.0).abs() < 0.2,
+            "{}",
+            a.position_now()
+        );
+    }
+
+    #[test]
+    fn poll_far_from_the_local_clock_re_anchors() {
+        let mut a = playing_app(10.0, 1);
+        let anchor = a.status_at;
+        poll(&mut a, PlayerState::Playing, 30.0);
+        assert!(a.status_at > anchor);
+        assert_eq!(a.status.position_secs, 30.0);
+    }
+
+    #[test]
+    fn poll_while_paused_always_takes_the_position() {
+        let mut a = playing_app(10.0, 1);
+        a.status.state = PlayerState::Paused;
+        poll(&mut a, PlayerState::Paused, 10.4);
+        assert_eq!(a.status.position_secs, 10.4);
+    }
+
+    #[test]
+    fn seek_moves_the_clock_immediately() {
+        let mut a = playing_app(10.0, 2);
+        let fx = reduce(&mut a, code(KeyCode::Right));
+        assert!(matches!(fx[..], [Effect::Send(Command::Seek(p))] if (p - 17.0).abs() < 0.2));
+        assert!(
+            (a.position_now() - 17.0).abs() < 0.2,
+            "{}",
+            a.position_now()
+        );
+        reduce(&mut a, code(KeyCode::Left));
+        assert!(
+            (a.position_now() - 12.0).abs() < 0.2,
+            "{}",
+            a.position_now()
+        );
+        // A stale poll from before the seek must not drag the clock back.
+        poll(&mut a, PlayerState::Playing, 12.4);
+        assert!(
+            (a.position_now() - 12.0).abs() < 0.2,
+            "{}",
+            a.position_now()
+        );
     }
 
     #[test]

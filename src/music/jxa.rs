@@ -94,8 +94,11 @@ if (st !== "stopped") {
       track_number: t.trackNumber() || 0, disc_number: t.discNumber() || 0, year: t.year() || 0 };
   } catch (e) {}
 }
-JSON.stringify({ state: st, track_id, track, position_secs: Music.playerPosition() || 0,
-  volume: Music.soundVolume(), shuffle: Music.shuffleEnabled(), repeat: Music.songRepeat() });
+// Position last: it is the value the clock anchors to, so read it as close
+// to the reply as possible.
+JSON.stringify({ state: st, track_id, track, volume: Music.soundVolume(),
+  shuffle: Music.shuffleEnabled(), repeat: Music.songRepeat(),
+  position_secs: Music.playerPosition() || 0 });
 "#;
 
 /// Name of the playlist appytui owns for album, artist and playlist playback.

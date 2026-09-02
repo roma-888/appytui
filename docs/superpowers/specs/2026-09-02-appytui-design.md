@@ -164,11 +164,22 @@ must be in place before `play`. The `appytui` playlist is skipped by
 
 `App` holds: loaded library and playlists, derived album and artist indexes,
 the active tab, per-tab list cursors and drill-down state, the filter query,
-the current `PlayerStatus` plus the instant it was received (the UI
+the current `PlayerStatus` plus the instant it was anchored (the UI
 interpolates the position locally while playing so the progress bar moves
 smoothly between 1 Hz polls), the play context (see queue), the latest visualizer
 frame, the current cover art grid, a transient status message, and flags such
 as help-overlay open.
+
+Clock rules. Space and the seek keys move the local clock at once (pause
+freezes it at the interpolated position, resume restarts it, seek sets it) and
+open the optimistic window. A poll for the same track keeps the local state,
+position and anchor when it arrives inside that window with a different state
+(it predates the key) or while playing (it would drag a seek back), and when,
+outside the window, both sides are playing and it agrees with the local clock
+within `CLOCK_TOLERANCE_SECS` (0.5 s), because polls arrive tens of
+milliseconds late and re-anchoring on each made the seconds hiccup. Any other
+poll re-anchors. The status script reads `playerPosition` last so the anchor
+is as fresh as possible.
 
 `reduce(&mut App, Action) -> Vec<Effect>` is pure with respect to I/O. Actions
 are key presses, tick, bridge events, visualizer frames, and art results.
