@@ -123,7 +123,9 @@ pub struct ThemeConfig {
 
 impl Default for ThemeConfig {
     fn default() -> Self {
-        Self { name: "catppuccin-mocha".to_string() }
+        Self {
+            name: "catppuccin-mocha".to_string(),
+        }
     }
 }
 
@@ -166,8 +168,8 @@ impl Config {
             std::fs::write(path, DEFAULT_CONFIG)
                 .with_context(|| format!("writing {}", path.display()))?;
         }
-        let text = std::fs::read_to_string(path)
-            .with_context(|| format!("reading {}", path.display()))?;
+        let text =
+            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
         toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))
     }
 }

@@ -12,7 +12,11 @@ pub struct PlayContext {
 
 impl PlayContext {
     pub fn new(track_ids: Vec<TrackId>, index: usize, playlist: Option<PlaylistId>) -> Self {
-        Self { track_ids, index, playlist }
+        Self {
+            track_ids,
+            index,
+            playlist,
+        }
     }
 
     /// Point `index` at `id`: the nearest occurrence at or after the current

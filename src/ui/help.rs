@@ -27,8 +27,12 @@ pub fn draw(frame: &mut Frame, p: &Palette, area: Rect) {
     let text: Vec<String> = KEYS.iter().map(|(k, d)| format!(" {k:<16} {d}")).collect();
     frame.render_widget(Clear, area);
     frame.render_widget(
-        Paragraph::new(text.join("\n"))
-            .block(Block::default().borders(Borders::ALL).title(" Keys ").border_style(Style::default().fg(p.accent))),
+        Paragraph::new(text.join("\n")).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Keys ")
+                .border_style(Style::default().fg(p.accent)),
+        ),
         area,
     );
 }

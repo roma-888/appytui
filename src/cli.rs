@@ -25,7 +25,9 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<Args, String> {
     let mut out = Args::default();
     while let Some(a) = args.next() {
         match a.as_str() {
-            "--config" => out.config = Some(PathBuf::from(args.next().ok_or("--config needs a path")?)),
+            "--config" => {
+                out.config = Some(PathBuf::from(args.next().ok_or("--config needs a path")?))
+            }
             "--theme" => out.theme = Some(args.next().ok_or("--theme needs a name")?),
             "--no-viz" => out.no_viz = true,
             "--no-art" => out.no_art = true,

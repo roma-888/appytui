@@ -109,7 +109,10 @@ pub fn run_script(script: &str, args: &Value, timeout: Duration) -> Result<Strin
         if start.elapsed() > timeout {
             let _ = child.kill();
             let _ = child.wait();
-            bail!("osascript timed out after {}s (is Music.app showing a dialog?)", timeout.as_secs());
+            bail!(
+                "osascript timed out after {}s (is Music.app showing a dialog?)",
+                timeout.as_secs()
+            );
         }
         std::thread::sleep(Duration::from_millis(5));
     };
@@ -170,9 +173,15 @@ impl MusicBridge for JxaBridge {
         parse_status(&self.run(STATUS, json!({}))?)
     }
     fn music_pid(&mut self) -> Result<u32> {
-        let out = Proc::new("pgrep").args(["-x", "Music"]).output().context("running pgrep")?;
+        let out = Proc::new("pgrep")
+            .args(["-x", "Music"])
+            .output()
+            .context("running pgrep")?;
         let text = String::from_utf8_lossy(&out.stdout);
-        text.lines().next().and_then(|l| l.trim().parse().ok()).context("Music.app is not running")
+        text.lines()
+            .next()
+            .and_then(|l| l.trim().parse().ok())
+            .context("Music.app is not running")
     }
     fn play_track(&mut self, track: &TrackId, context: Option<&PlaylistId>) -> Result<()> {
         let args = json!({ "track": track.0, "playlist": context.map(|c| c.0.clone()) });
@@ -188,16 +197,19 @@ impl MusicBridge for JxaBridge {
         self.run(PREVIOUS, json!({})).map(|_| ())
     }
     fn seek(&mut self, seconds: f64) -> Result<()> {
-        self.run(SEEK, json!({ "seconds": seconds.max(0.0) })).map(|_| ())
+        self.run(SEEK, json!({ "seconds": seconds.max(0.0) }))
+            .map(|_| ())
     }
     fn set_volume(&mut self, percent: u8) -> Result<()> {
-        self.run(SET_VOLUME, json!({ "volume": percent.min(100) })).map(|_| ())
+        self.run(SET_VOLUME, json!({ "volume": percent.min(100) }))
+            .map(|_| ())
     }
     fn set_shuffle(&mut self, on: bool) -> Result<()> {
         self.run(SET_SHUFFLE, json!({ "on": on })).map(|_| ())
     }
     fn set_repeat(&mut self, mode: RepeatMode) -> Result<()> {
-        self.run(SET_REPEAT, json!({ "mode": mode.as_str() })).map(|_| ())
+        self.run(SET_REPEAT, json!({ "mode": mode.as_str() }))
+            .map(|_| ())
     }
 }
 
@@ -211,7 +223,8 @@ mod tests {
         assert_eq!(status.volume, 80);
         let lib = parse_library(r#"[{"id":"A","name":"n","artist":"a","album":"b","album_artist":"","duration_secs":1,"track_number":0,"disc_number":0,"year":0}]"#).unwrap();
         assert_eq!(lib.len(), 1);
-        let pls = parse_playlists(r#"[{"id":"P","name":"p","smart":false,"track_ids":[]}]"#).unwrap();
+        let pls =
+            parse_playlists(r#"[{"id":"P","name":"p","smart":false,"track_ids":[]}]"#).unwrap();
         assert_eq!(pls[0].name, "p");
     }
 
@@ -228,7 +241,8 @@ mod tests {
 
     #[test]
     fn run_script_times_out() {
-        let err = run_script("while (true) {}", &json!({}), Duration::from_millis(300)).unwrap_err();
+        let err =
+            run_script("while (true) {}", &json!({}), Duration::from_millis(300)).unwrap_err();
         assert!(err.to_string().contains("timed out"), "{err}");
     }
 

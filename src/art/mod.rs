@@ -39,7 +39,10 @@ pub fn cache_key(artist: &str, album: &str) -> String {
 
 /// `~/Library/Caches/appytui/art`
 pub fn cache_dir() -> PathBuf {
-    dirs::cache_dir().unwrap_or_else(std::env::temp_dir).join("appytui").join("art")
+    dirs::cache_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join("appytui")
+        .join("art")
 }
 
 #[derive(serde::Deserialize)]
@@ -54,8 +57,12 @@ struct SearchResult {
 }
 
 pub fn parse_lookup(json: &str) -> Result<String> {
-    let resp: SearchResponse = serde_json::from_str(json).context("parsing iTunes search response")?;
-    resp.results.into_iter().find_map(|r| r.artwork_url_100).ok_or_else(|| anyhow!("no artwork in search results"))
+    let resp: SearchResponse =
+        serde_json::from_str(json).context("parsing iTunes search response")?;
+    resp.results
+        .into_iter()
+        .find_map(|r| r.artwork_url_100)
+        .ok_or_else(|| anyhow!("no artwork in search results"))
 }
 
 pub fn lookup_url(artist: &str, name: &str) -> Result<String> {
@@ -82,16 +89,26 @@ fn fetch(cache_dir: &PathBuf, req: &ArtRequest) -> Result<RgbImage> {
         std::fs::read(&path).context("reading cached art")?
     } else {
         let url = lookup_url(&req.artist, &req.name)?;
-        let bytes =
-            ureq::get(&url).call().context("downloading art")?.body_mut().read_to_vec().context("reading art body")?;
+        let bytes = ureq::get(&url)
+            .call()
+            .context("downloading art")?
+            .body_mut()
+            .read_to_vec()
+            .context("reading art body")?;
         std::fs::create_dir_all(cache_dir).ok();
         std::fs::write(&path, &bytes).ok();
         bytes
     };
-    Ok(image::load_from_memory(&bytes).context("decoding art")?.to_rgb8())
+    Ok(image::load_from_memory(&bytes)
+        .context("decoding art")?
+        .to_rgb8())
 }
 
-pub fn spawn(cache_dir: PathBuf, rx: Receiver<ArtRequest>, tx: Sender<ArtResult>) -> JoinHandle<()> {
+pub fn spawn(
+    cache_dir: PathBuf,
+    rx: Receiver<ArtRequest>,
+    tx: Sender<ArtResult>,
+) -> JoinHandle<()> {
     std::thread::Builder::new()
         .name("album-art".into())
         .spawn(move || {
@@ -99,7 +116,13 @@ pub fn spawn(cache_dir: PathBuf, rx: Receiver<ArtRequest>, tx: Sender<ArtResult>
                 // Skip stale requests if the track changed several times quickly.
                 let req = rx.try_iter().last().unwrap_or(req);
                 let image = fetch(&cache_dir, &req).ok();
-                if tx.send(ArtResult { key: req.key, image }).is_err() {
+                if tx
+                    .send(ArtResult {
+                        key: req.key,
+                        image,
+                    })
+                    .is_err()
+                {
                     break;
                 }
             }
@@ -113,14 +136,18 @@ mod tests {
 
     #[test]
     fn cache_key_is_stable_and_case_insensitive() {
-        assert_eq!(cache_key("a-ha", "Hunting High"), cache_key("A-HA", "hunting high"));
+        assert_eq!(
+            cache_key("a-ha", "Hunting High"),
+            cache_key("A-HA", "hunting high")
+        );
         assert_ne!(cache_key("a", "b"), cache_key("a", "c"));
         assert_eq!(cache_key("x", "y").len(), 16);
     }
 
     #[test]
     fn parse_lookup_takes_first_artwork() {
-        let json = r#"{"resultCount":1,"results":[{"artworkUrl100":"https://example/100x100bb.jpg"}]}"#;
+        let json =
+            r#"{"resultCount":1,"results":[{"artworkUrl100":"https://example/100x100bb.jpg"}]}"#;
         assert_eq!(parse_lookup(json).unwrap(), "https://example/100x100bb.jpg");
         assert!(parse_lookup(r#"{"results":[]}"#).is_err());
     }
@@ -137,8 +164,16 @@ mod tests {
         let (req_tx, req_rx) = crossbeam_channel::unbounded();
         let (res_tx, res_rx) = crossbeam_channel::unbounded();
         let handle = spawn(dir.clone(), req_rx, res_tx);
-        req_tx.send(ArtRequest { key: key.clone(), artist: "Artist".into(), name: "Song".into() }).unwrap();
-        let res = res_rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+        req_tx
+            .send(ArtRequest {
+                key: key.clone(),
+                artist: "Artist".into(),
+                name: "Song".into(),
+            })
+            .unwrap();
+        let res = res_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
         assert_eq!(res.key, key);
         assert!(res.image.is_some());
         drop(req_tx);

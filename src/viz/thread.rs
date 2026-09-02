@@ -30,7 +30,9 @@ fn open_source(pid: Option<u32>, tx: &Sender<VizEvent>) -> Source {
     #[cfg(not(target_os = "macos"))]
     {
         let _ = pid;
-        let _ = tx.send(VizEvent::Fallback("Visualizer simulated: audio capture unavailable on this platform".into()));
+        let _ = tx.send(VizEvent::Fallback(
+            "Visualizer simulated: audio capture unavailable on this platform".into(),
+        ));
         Source::Simulated(Simulated::default())
     }
 }
@@ -55,7 +57,13 @@ pub fn spawn(
         .expect("spawn visualizer thread")
 }
 
-fn run(mut settings: VizSettings, mut pid: Option<u32>, mut bars: usize, ctl: Receiver<Control>, tx: Sender<VizEvent>) {
+fn run(
+    mut settings: VizSettings,
+    mut pid: Option<u32>,
+    mut bars: usize,
+    ctl: Receiver<Control>,
+    tx: Sender<VizEvent>,
+) {
     let mut source = open_source(pid, &tx);
     let rate = match &source {
         #[cfg(target_os = "macos")]
@@ -134,7 +142,10 @@ fn run(mut settings: VizSettings, mut pid: Option<u32>, mut bars: usize, ctl: Re
             }
             Source::Simulated(sim) => {
                 if playing {
-                    let f = sim.frame(per_channel(bars, &settings), settings.channels == Channels::Stereo);
+                    let f = sim.frame(
+                        per_channel(bars, &settings),
+                        settings.channels == Channels::Stereo,
+                    );
                     let _ = tx.send(VizEvent::Frame(f));
                 } else if !idle_sent {
                     idle_sent = true;
@@ -157,7 +168,10 @@ mod tests {
     fn per_channel_halves_for_stereo() {
         let s = VizSettings::default();
         assert_eq!(per_channel(20, &s), 10);
-        let m = VizSettings { channels: Channels::Mono, ..s };
+        let m = VizSettings {
+            channels: Channels::Mono,
+            ..s
+        };
         assert_eq!(per_channel(20, &m), 20);
         assert_eq!(per_channel(0, &m), 1);
     }
@@ -166,7 +180,10 @@ mod tests {
     fn simulated_source_emits_frames_while_playing_and_stops_cleanly() {
         let (ctl_tx, ctl_rx) = crossbeam_channel::unbounded();
         let (tx, rx) = crossbeam_channel::unbounded();
-        let settings = VizSettings { framerate: 60, ..VizSettings::default() };
+        let settings = VizSettings {
+            framerate: 60,
+            ..VizSettings::default()
+        };
         // Drive the simulated source directly: a real tap is not deterministic in CI.
         let handle = std::thread::spawn(move || {
             let mut sim = Simulated::default();
@@ -177,7 +194,9 @@ mod tests {
                 }
             }
         });
-        assert!(matches!(rx.recv_timeout(Duration::from_secs(1)).unwrap(), VizEvent::Frame(f) if f.left.len() == 4));
+        assert!(
+            matches!(rx.recv_timeout(Duration::from_secs(1)).unwrap(), VizEvent::Frame(f) if f.left.len() == 4)
+        );
         ctl_tx.send(Control::Shutdown).unwrap();
         handle.join().unwrap();
     }

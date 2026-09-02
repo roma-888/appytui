@@ -68,13 +68,25 @@ impl Visualizer<'_> {
     }
 
     fn put(&self, buf: &mut Buffer, x: u16, y: u16, sym: &str, row_frac: f32, bar_frac: f32) {
-        buf[(x, y)].set_symbol(sym).set_style(Style::default().fg(self.colour(row_frac, bar_frac)));
+        buf[(x, y)]
+            .set_symbol(sym)
+            .set_style(Style::default().fg(self.colour(row_frac, bar_frac)));
     }
 
     /// Draw one bar column `x` of value `v` (0..1) over `rows` rows starting at
     /// `y0`, growing away from the base. `upward` selects lower-block partials.
     #[allow(clippy::too_many_arguments)]
-    fn column(&self, buf: &mut Buffer, x: u16, y0: u16, rows: u16, v: f32, upward: bool, bar_frac: f32, idle: bool) {
+    fn column(
+        &self,
+        buf: &mut Buffer,
+        x: u16,
+        y0: u16,
+        rows: u16,
+        v: f32,
+        upward: bool,
+        bar_frac: f32,
+        idle: bool,
+    ) {
         if rows == 0 {
             return;
         }
@@ -93,7 +105,11 @@ impl Visualizer<'_> {
             if cell_e == 0 {
                 break;
             }
-            let row_frac = if rows > 1 { r as f32 / (rows - 1) as f32 } else { 0.0 };
+            let row_frac = if rows > 1 {
+                r as f32 / (rows - 1) as f32
+            } else {
+                0.0
+            };
             let y = if upward { y0 + rows - 1 - r } else { y0 + r };
             let sym = if upward {
                 LOWER[cell_e as usize]
@@ -115,21 +131,38 @@ impl Visualizer<'_> {
         let idle = self.settings.show_idle_bar_heads;
         for (i, &v) in values.iter().enumerate() {
             let x0 = area.x + i as u16 * (bw + sp);
-            let bar_frac = if n > 1 { i as f32 / (n - 1) as f32 } else { 0.0 };
+            let bar_frac = if n > 1 {
+                i as f32 / (n - 1) as f32
+            } else {
+                0.0
+            };
             for dx in 0..bw {
                 let x = x0 + dx;
                 if x >= area.x + area.width {
                     return;
                 }
                 match self.settings.orientation {
-                    Orientation::Bottom => self.column(buf, x, area.y, area.height, v, true, bar_frac, idle),
-                    Orientation::Top => self.column(buf, x, area.y, area.height, v, false, bar_frac, idle),
+                    Orientation::Bottom => {
+                        self.column(buf, x, area.y, area.height, v, true, bar_frac, idle)
+                    }
+                    Orientation::Top => {
+                        self.column(buf, x, area.y, area.height, v, false, bar_frac, idle)
+                    }
                     Orientation::Horizontal => {
                         let up_rows = area.height / 2;
                         let down_rows = area.height - up_rows;
                         let down_v = values_down.map(|d| d[i]).unwrap_or(v);
                         self.column(buf, x, area.y, up_rows, v, true, bar_frac, idle);
-                        self.column(buf, x, area.y + up_rows, down_rows, down_v, false, bar_frac, false);
+                        self.column(
+                            buf,
+                            x,
+                            area.y + up_rows,
+                            down_rows,
+                            down_v,
+                            false,
+                            bar_frac,
+                            false,
+                        );
                     }
                 }
             }
@@ -143,9 +176,17 @@ impl Visualizer<'_> {
         }
         let centre = area.height / 2;
         for x in 0..w {
-            let idx = if wave.is_empty() { 0 } else { x * wave.len() / w };
+            let idx = if wave.is_empty() {
+                0
+            } else {
+                x * wave.len() / w
+            };
             let v = wave.get(idx).copied().unwrap_or(0.0).clamp(-1.0, 1.0);
-            let bar_frac = if w > 1 { x as f32 / (w - 1) as f32 } else { 0.0 };
+            let bar_frac = if w > 1 {
+                x as f32 / (w - 1) as f32
+            } else {
+                0.0
+            };
             let xx = area.x + x as u16;
             if v.abs() < 0.02 {
                 if self.settings.show_idle_bar_heads {
@@ -218,14 +259,26 @@ mod tests {
     use super::*;
 
     fn settings(orientation: Orientation, channels: Channels) -> VizSettings {
-        VizSettings { orientation, channels, bar_width: 1, bar_spacing: 1, ..VizSettings::default() }
+        VizSettings {
+            orientation,
+            channels,
+            bar_width: 1,
+            bar_spacing: 1,
+            ..VizSettings::default()
+        }
     }
 
     fn render(frame: &Frame, s: &VizSettings, w: u16, h: u16) -> Buffer {
         let area = Rect::new(0, 0, w, h);
         let mut buf = Buffer::empty(area);
         let theme = Theme::builtin("terminal").unwrap();
-        Visualizer { frame: Some(frame), settings: s, theme: &theme, truecolor: true }.render(area, &mut buf);
+        Visualizer {
+            frame: Some(frame),
+            settings: s,
+            theme: &theme,
+            truecolor: true,
+        }
+        .render(area, &mut buf);
         buf
     }
 
@@ -237,27 +290,51 @@ mod tests {
     fn bar_count_accounts_for_width_and_spacing() {
         let s = settings(Orientation::Bottom, Channels::Mono);
         assert_eq!(bar_count(7, &s), 4);
-        let wide = VizSettings { bar_width: 2, bar_spacing: 1, ..s };
+        let wide = VizSettings {
+            bar_width: 2,
+            bar_spacing: 1,
+            ..s
+        };
         assert_eq!(bar_count(8, &wide), 3);
-        let stereo = VizSettings { channels: Channels::Stereo, ..wide };
+        let stereo = VizSettings {
+            channels: Channels::Stereo,
+            ..wide
+        };
         assert_eq!(bar_count(11, &stereo) % 2, 0);
     }
 
     #[test]
     fn stereo_mirrors_with_bass_in_centre() {
-        let f = Frame { left: vec![0.1, 0.2, 0.3], right: vec![0.4, 0.5, 0.6], waveform: vec![] };
+        let f = Frame {
+            left: vec![0.1, 0.2, 0.3],
+            right: vec![0.4, 0.5, 0.6],
+            waveform: vec![],
+        };
         let s = settings(Orientation::Bottom, Channels::Stereo);
-        assert_eq!(display_values(&f, &s, 6), vec![0.3, 0.2, 0.1, 0.4, 0.5, 0.6]);
+        assert_eq!(
+            display_values(&f, &s, 6),
+            vec![0.3, 0.2, 0.1, 0.4, 0.5, 0.6]
+        );
         let rev = VizSettings { reverse: true, ..s };
-        assert_eq!(display_values(&f, &rev, 6), vec![0.6, 0.5, 0.4, 0.1, 0.2, 0.3]);
+        assert_eq!(
+            display_values(&f, &rev, 6),
+            vec![0.6, 0.5, 0.4, 0.1, 0.2, 0.3]
+        );
     }
 
     #[test]
     fn bottom_bars_grow_upwards_with_partial_top() {
-        let f = Frame { left: vec![1.0, 0.5, 0.0, 0.125], right: vec![], waveform: vec![] };
+        let f = Frame {
+            left: vec![1.0, 0.5, 0.0, 0.125],
+            right: vec![],
+            waveform: vec![],
+        };
         let s = settings(Orientation::Bottom, Channels::Mono);
         let buf = render(&f, &s, 7, 4);
-        assert_eq!((0..4).map(|y| sym(&buf, 0, y)).collect::<Vec<_>>(), vec!["█", "█", "█", "█"]);
+        assert_eq!(
+            (0..4).map(|y| sym(&buf, 0, y)).collect::<Vec<_>>(),
+            vec!["█", "█", "█", "█"]
+        );
         assert_eq!(sym(&buf, 2, 3), "█");
         assert_eq!(sym(&buf, 2, 2), "█");
         assert_eq!(sym(&buf, 2, 1), " ");
@@ -268,7 +345,11 @@ mod tests {
 
     #[test]
     fn top_bars_hang_from_the_top() {
-        let f = Frame { left: vec![0.5], right: vec![], waveform: vec![] };
+        let f = Frame {
+            left: vec![0.5],
+            right: vec![],
+            waveform: vec![],
+        };
         let s = settings(Orientation::Top, Channels::Mono);
         let buf = render(&f, &s, 1, 4);
         assert_eq!(sym(&buf, 0, 0), "█");
@@ -278,11 +359,19 @@ mod tests {
 
     #[test]
     fn horizontal_bars_are_symmetric_about_centre() {
-        let f = Frame { left: vec![1.0], right: vec![], waveform: vec![] };
+        let f = Frame {
+            left: vec![1.0],
+            right: vec![],
+            waveform: vec![],
+        };
         let s = settings(Orientation::Horizontal, Channels::Mono);
         let buf = render(&f, &s, 1, 6);
         assert!((0..6).all(|y| sym(&buf, 0, y) == "█"));
-        let half = Frame { left: vec![0.5], right: vec![], waveform: vec![] };
+        let half = Frame {
+            left: vec![0.5],
+            right: vec![],
+            waveform: vec![],
+        };
         let buf = render(&half, &s, 1, 6);
         assert_eq!(sym(&buf, 0, 0), " ");
         assert_eq!(sym(&buf, 0, 2), "█");
@@ -292,21 +381,41 @@ mod tests {
 
     #[test]
     fn gradient_colours_rows_bottom_to_top() {
-        let f = Frame { left: vec![1.0], right: vec![], waveform: vec![] };
+        let f = Frame {
+            left: vec![1.0],
+            right: vec![],
+            waveform: vec![],
+        };
         let s = settings(Orientation::Bottom, Channels::Mono);
         let area = Rect::new(0, 0, 1, 2);
         let mut buf = Buffer::empty(area);
-        let theme =
-            Theme::parse("t", "gradient = 1\ngradient_color_1 = '#000000'\ngradient_color_2 = '#ffffff'\n").unwrap();
-        Visualizer { frame: Some(&f), settings: &s, theme: &theme, truecolor: true }.render(area, &mut buf);
+        let theme = Theme::parse(
+            "t",
+            "gradient = 1\ngradient_color_1 = '#000000'\ngradient_color_2 = '#ffffff'\n",
+        )
+        .unwrap();
+        Visualizer {
+            frame: Some(&f),
+            settings: &s,
+            theme: &theme,
+            truecolor: true,
+        }
+        .render(area, &mut buf);
         assert_eq!(buf[(0, 1)].fg, ratatui::style::Color::Rgb(0, 0, 0));
         assert_eq!(buf[(0, 0)].fg, ratatui::style::Color::Rgb(255, 255, 255));
     }
 
     #[test]
     fn waveform_draws_from_centre() {
-        let f = Frame { left: vec![], right: vec![], waveform: vec![0.0, 1.0, -1.0, 0.0] };
-        let s = VizSettings { waveform: true, ..settings(Orientation::Bottom, Channels::Mono) };
+        let f = Frame {
+            left: vec![],
+            right: vec![],
+            waveform: vec![0.0, 1.0, -1.0, 0.0],
+        };
+        let s = VizSettings {
+            waveform: true,
+            ..settings(Orientation::Bottom, Channels::Mono)
+        };
         let buf = render(&f, &s, 4, 5);
         assert_eq!(sym(&buf, 1, 0), "█");
         assert_eq!(sym(&buf, 2, 4), "█");
@@ -319,7 +428,13 @@ mod tests {
         let area = Rect::new(0, 0, 3, 2);
         let mut buf = Buffer::empty(area);
         let theme = Theme::builtin("terminal").unwrap();
-        Visualizer { frame: None, settings: &s, theme: &theme, truecolor: true }.render(area, &mut buf);
+        Visualizer {
+            frame: None,
+            settings: &s,
+            theme: &theme,
+            truecolor: true,
+        }
+        .render(area, &mut buf);
         assert_eq!(sym(&buf, 0, 1), "▁");
         assert_eq!(sym(&buf, 2, 1), "▁");
         assert_eq!(sym(&buf, 0, 0), " ");

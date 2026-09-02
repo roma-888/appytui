@@ -27,7 +27,9 @@ impl Simulated {
         Frame {
             left: bars_for(0.0),
             right: if stereo { bars_for(2.5) } else { Vec::new() },
-            waveform: (0..super::spectrum::WAVEFORM_LEN).map(|i| ((i as f32 * 0.1 + t * 0.3).sin()) * 0.6).collect(),
+            waveform: (0..super::spectrum::WAVEFORM_LEN)
+                .map(|i| ((i as f32 * 0.1 + t * 0.3).sin()) * 0.6)
+                .collect(),
         }
     }
 }

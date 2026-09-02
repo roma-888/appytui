@@ -14,7 +14,14 @@ pub enum Tab {
 }
 
 impl Tab {
-    pub const ALL: [Tab; 6] = [Tab::Songs, Tab::Albums, Tab::Artists, Tab::Playlists, Tab::Search, Tab::Queue];
+    pub const ALL: [Tab; 6] = [
+        Tab::Songs,
+        Tab::Albums,
+        Tab::Artists,
+        Tab::Playlists,
+        Tab::Search,
+        Tab::Queue,
+    ];
 
     pub fn index(self) -> usize {
         Tab::ALL.iter().position(|t| *t == self).unwrap_or(0)
@@ -92,7 +99,10 @@ impl Default for Filter {
 
 impl Filter {
     pub fn new() -> Self {
-        Self { matcher: Matcher::new(Config::DEFAULT), buf: Vec::new() }
+        Self {
+            matcher: Matcher::new(Config::DEFAULT),
+            buf: Vec::new(),
+        }
     }
 
     /// Return the ids of matching items, best match first. Empty query matches nothing.
@@ -129,7 +139,11 @@ mod tests {
     #[test]
     fn filter_ranks_fuzzy_matches_and_drops_misses() {
         let mut f = Filter::new();
-        let items = vec![(0, "Take On Me a-ha".to_string()), (1, "Toxic Britney".to_string()), (2, "Zebra".to_string())];
+        let items = vec![
+            (0, "Take On Me a-ha".to_string()),
+            (1, "Toxic Britney".to_string()),
+            (2, "Zebra".to_string()),
+        ];
         let hits = f.rank("take", &items);
         assert_eq!(hits, vec![0]);
         let hits = f.rank("t", &items);

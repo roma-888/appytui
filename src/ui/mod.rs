@@ -37,9 +37,14 @@ impl Palette {
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let palette = Palette::from(app);
-    let [top, middle, bottom] =
-        Layout::vertical([Constraint::Length(1), Constraint::Min(5), Constraint::Length(1)]).areas(frame.area());
-    let [left, right] = Layout::horizontal([Constraint::Percentage(60), Constraint::Percentage(40)]).areas(middle);
+    let [top, middle, bottom] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Min(5),
+        Constraint::Length(1),
+    ])
+    .areas(frame.area());
+    let [left, right] =
+        Layout::horizontal([Constraint::Percentage(60), Constraint::Percentage(40)]).areas(middle);
 
     tabs::draw(frame, app, &palette, top);
     list::draw(frame, app, &palette, left);
@@ -54,7 +59,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 pub fn centered(area: Rect, w: u16, h: u16) -> Rect {
     let w = w.min(area.width);
     let h = h.min(area.height);
-    Rect::new(area.x + (area.width - w) / 2, area.y + (area.height - h) / 2, w, h)
+    Rect::new(
+        area.x + (area.width - w) / 2,
+        area.y + (area.height - h) / 2,
+        w,
+        h,
+    )
 }
 
 #[cfg(test)]
@@ -85,12 +95,24 @@ mod tests {
 
     #[test]
     fn renders_tabs_list_and_now_playing() {
-        let mut app = App::new(Theme::builtin("catppuccin-mocha").unwrap(), VizSettings::default(), false);
+        let mut app = App::new(
+            Theme::builtin("catppuccin-mocha").unwrap(),
+            VizSettings::default(),
+            false,
+        );
         let text = render(&mut app);
         assert!(text.contains("Songs"));
         assert!(text.contains("Loading library"));
 
-        reduce(&mut app, Action::Bridge(Event::Library(vec![track("1", "Alpha Song", "Ann", "Album A")])));
+        reduce(
+            &mut app,
+            Action::Bridge(Event::Library(vec![track(
+                "1",
+                "Alpha Song",
+                "Ann",
+                "Album A",
+            )])),
+        );
         reduce(
             &mut app,
             Action::Bridge(Event::Status(PlayerStatus {

@@ -13,8 +13,8 @@ use crossbeam_channel::{select, unbounded};
 use ratatui::crossterm::event::{self, Event as TermEvent};
 
 use app::App;
-use art::{ArtRequest, ArtResult};
 use app::reducer::{Action, Effect, reduce};
+use art::{ArtRequest, ArtResult};
 use config::Config;
 use config::theme::Theme;
 use music::Command;
@@ -66,12 +66,26 @@ fn run(args: cli::Args) -> Result<()> {
 
     let (viz_tx, viz_rx) = unbounded::<VizEvent>();
     let (viz_ctl_tx, viz_ctl_rx) = unbounded::<Control>();
-    let viz_handle = if viz.enabled { Some(viz::thread::spawn(viz.clone(), None, 40, viz_ctl_rx, viz_tx)) } else { None };
+    let viz_handle = if viz.enabled {
+        Some(viz::thread::spawn(
+            viz.clone(),
+            None,
+            40,
+            viz_ctl_rx,
+            viz_tx,
+        ))
+    } else {
+        None
+    };
     let mut last_bars = 0usize;
 
     let (art_req_tx, art_req_rx) = unbounded::<ArtRequest>();
     let (art_res_tx, art_res_rx) = unbounded::<ArtResult>();
-    let art_handle = if art_enabled { Some(art::spawn(art::cache_dir(), art_req_rx, art_res_tx)) } else { None };
+    let art_handle = if art_enabled {
+        Some(art::spawn(art::cache_dir(), art_req_rx, art_res_tx))
+    } else {
+        None
+    };
 
     let (key_tx, key_rx) = unbounded::<TermEvent>();
     std::thread::Builder::new()

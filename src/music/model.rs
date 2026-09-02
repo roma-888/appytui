@@ -24,7 +24,11 @@ pub struct Track {
 impl Track {
     /// Artist used for grouping albums and artists.
     pub fn grouping_artist(&self) -> &str {
-        if self.album_artist.is_empty() { &self.artist } else { &self.album_artist }
+        if self.album_artist.is_empty() {
+            &self.artist
+        } else {
+            &self.album_artist
+        }
     }
 }
 
@@ -101,7 +105,11 @@ impl Default for PlayerStatus {
 pub fn fmt_duration(secs: f64) -> String {
     let s = secs.max(0.0).round() as u64;
     let (h, m, s) = (s / 3600, (s % 3600) / 60, s % 60);
-    if h > 0 { format!("{h}:{m:02}:{s:02}") } else { format!("{m}:{s:02}") }
+    if h > 0 {
+        format!("{h}:{m:02}:{s:02}")
+    } else {
+        format!("{m}:{s:02}")
+    }
 }
 
 #[cfg(test)]
@@ -121,7 +129,10 @@ mod tests {
     fn status_carries_track_snapshot_when_present() {
         let json = r#"{"state":"playing","track_id":"X","track":{"id":"X","name":"Pretty Pure","artist":"whenyoung","album":"Single","album_artist":"","duration_secs":237.8,"track_number":0,"disc_number":0,"year":0},"position_secs":1,"volume":100,"shuffle":false,"repeat":"off"}"#;
         let s: PlayerStatus = serde_json::from_str(json).unwrap();
-        assert_eq!(s.track.as_ref().map(|t| t.name.as_str()), Some("Pretty Pure"));
+        assert_eq!(
+            s.track.as_ref().map(|t| t.name.as_str()),
+            Some("Pretty Pure")
+        );
     }
 
     #[test]

@@ -41,7 +41,11 @@ pub fn spawn(
         .expect("spawn music bridge thread")
 }
 
-fn poll_status(bridge: &mut dyn MusicBridge, events: &Sender<Event>, last: &mut Option<PlayerStatus>) {
+fn poll_status(
+    bridge: &mut dyn MusicBridge,
+    events: &Sender<Event>,
+    last: &mut Option<PlayerStatus>,
+) {
     match bridge.status() {
         Ok(s) => {
             if last.as_ref() != Some(&s) {
@@ -91,13 +95,26 @@ mod tests {
         let (ev_tx, ev_rx) = crossbeam_channel::unbounded();
         let handle = spawn(Box::new(bridge), cmd_rx, ev_tx, Duration::from_millis(20));
 
-        assert_eq!(ev_rx.recv_timeout(Duration::from_secs(1)).unwrap(), Event::MusicPid(4242));
-        assert!(matches!(ev_rx.recv_timeout(Duration::from_secs(1)).unwrap(), Event::Status(_)));
+        assert_eq!(
+            ev_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
+            Event::MusicPid(4242)
+        );
+        assert!(matches!(
+            ev_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
+            Event::Status(_)
+        ));
 
         cmd_tx.send(Command::LoadLibrary).unwrap();
-        assert!(matches!(ev_rx.recv_timeout(Duration::from_secs(1)).unwrap(), Event::Library(t) if t.len() == 1));
+        assert!(
+            matches!(ev_rx.recv_timeout(Duration::from_secs(1)).unwrap(), Event::Library(t) if t.len() == 1)
+        );
 
-        cmd_tx.send(Command::PlayTrack { track: TrackId("A".into()), context: None }).unwrap();
+        cmd_tx
+            .send(Command::PlayTrack {
+                track: TrackId("A".into()),
+                context: None,
+            })
+            .unwrap();
         let ev = ev_rx.recv_timeout(Duration::from_secs(1)).unwrap();
         assert!(matches!(ev, Event::Status(s) if s.state == PlayerState::Playing));
 

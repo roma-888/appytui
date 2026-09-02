@@ -36,7 +36,11 @@ pub fn reduce(app: &mut App, action: Action) -> Vec<Effect> {
     match action {
         Action::Key(key) => on_key(app, key),
         Action::Tick => {
-            if app.message.as_ref().is_some_and(|(_, at)| at.elapsed() > MESSAGE_TTL) {
+            if app
+                .message
+                .as_ref()
+                .is_some_and(|(_, at)| at.elapsed() > MESSAGE_TTL)
+            {
                 app.message = None;
             }
             Vec::new()
@@ -85,7 +89,11 @@ fn on_bridge(app: &mut App, ev: Event) -> Vec<Effect> {
                     if app.art_key.as_deref() != Some(key.as_str()) {
                         app.art_key = Some(key.clone());
                         app.art = None;
-                        effects.push(Effect::LookupArt(ArtRequest { key, artist: track.artist, name: track.name }));
+                        effects.push(Effect::LookupArt(ArtRequest {
+                            key,
+                            artist: track.artist,
+                            name: track.name,
+                        }));
                     }
                 }
                 Some(_) => {}
@@ -107,7 +115,10 @@ fn on_bridge(app: &mut App, ev: Event) -> Vec<Effect> {
 
 fn on_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     if app.show_help {
-        if matches!(key.code, KeyCode::Char('?') | KeyCode::Esc | KeyCode::Char('q')) {
+        if matches!(
+            key.code,
+            KeyCode::Char('?') | KeyCode::Esc | KeyCode::Char('q')
+        ) {
             app.show_help = false;
         }
         return Vec::new();
@@ -130,7 +141,9 @@ fn on_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                 app.editing_filter = true;
             }
         }
-        KeyCode::Tab => app.tab = Tab::from_index((app.tab.index() + 1) % Tab::ALL.len()).unwrap_or(Tab::Songs),
+        KeyCode::Tab => {
+            app.tab = Tab::from_index((app.tab.index() + 1) % Tab::ALL.len()).unwrap_or(Tab::Songs)
+        }
         KeyCode::Char('j') | KeyCode::Down => app.view_mut().move_cursor(1, len),
         KeyCode::Char('k') | KeyCode::Up => app.view_mut().move_cursor(-1, len),
         KeyCode::Char('d') if ctrl => app.view_mut().move_cursor(10, len),
@@ -239,13 +252,17 @@ fn on_filter_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
 
 fn on_enter(app: &mut App) -> Vec<Effect> {
     let rows = app.rows(app.tab);
-    let Some(&row) = rows.get(app.view().cursor) else { return Vec::new() };
+    let Some(&row) = rows.get(app.view().cursor) else {
+        return Vec::new();
+    };
     match row {
         Row::Album(a) => drill(app, Drill::Album(a)),
         Row::Artist(a) => drill(app, Drill::Artist(a)),
         Row::Playlist(p) => drill(app, Drill::Playlist(p)),
         Row::Track(i) => {
-            let Some(lib) = app.library.as_ref() else { return Vec::new() };
+            let Some(lib) = app.library.as_ref() else {
+                return Vec::new();
+            };
             let track_id = lib.tracks[i].id.clone();
             let playlist = match (app.tab, app.view().drill) {
                 (Tab::Playlists, Drill::Playlist(p)) => Some(app.playlists[p].id.clone()),
@@ -265,7 +282,10 @@ fn on_enter(app: &mut App) -> Vec<Effect> {
                 let index = ids.iter().position(|id| *id == track_id).unwrap_or(0);
                 app.context = PlayContext::new(ids, index, playlist.clone());
             }
-            vec![Effect::Send(Command::PlayTrack { track: track_id, context: playlist })]
+            vec![Effect::Send(Command::PlayTrack {
+                track: track_id,
+                context: playlist,
+            })]
         }
     }
 }
@@ -288,7 +308,11 @@ mod tests {
     use crate::music::model::{PlayerState, PlayerStatus, Playlist, PlaylistId, RepeatMode};
 
     fn app() -> App {
-        let mut app = App::new(Theme::builtin("terminal").unwrap(), VizSettings::default(), false);
+        let mut app = App::new(
+            Theme::builtin("terminal").unwrap(),
+            VizSettings::default(),
+            false,
+        );
         let mut t3 = track("3", "Gamma", "Zed", "Album Z");
         t3.album_artist = "Zed".into();
         reduce(
@@ -347,7 +371,13 @@ mod tests {
         let mut a = app();
         reduce(&mut a, key('j'));
         let fx = reduce(&mut a, code(KeyCode::Enter));
-        assert_eq!(fx, vec![Effect::Send(Command::PlayTrack { track: TrackId("2".into()), context: None })]);
+        assert_eq!(
+            fx,
+            vec![Effect::Send(Command::PlayTrack {
+                track: TrackId("2".into()),
+                context: None
+            })]
+        );
         assert_eq!(a.context.index, 1);
         assert_eq!(a.context.track_ids.len(), 3);
         assert_eq!(a.context.playlist, None);
@@ -373,7 +403,10 @@ mod tests {
         reduce(&mut a, code(KeyCode::Enter));
         reduce(&mut a, code(KeyCode::Enter));
         assert_eq!(a.context.playlist, Some(PlaylistId("P1".into())));
-        assert_eq!(a.context.track_ids, vec![TrackId("3".into()), TrackId("1".into())]);
+        assert_eq!(
+            a.context.track_ids,
+            vec![TrackId("3".into()), TrackId("1".into())]
+        );
         reduce(&mut a, key('6'));
         assert_eq!(a.rows(Tab::Queue), vec![Row::Track(0)]);
     }
@@ -403,15 +436,39 @@ mod tests {
     #[test]
     fn transport_keys_send_commands_optimistically() {
         let mut a = app();
-        assert_eq!(reduce(&mut a, key(' ')), vec![Effect::Send(Command::PlayPause)]);
+        assert_eq!(
+            reduce(&mut a, key(' ')),
+            vec![Effect::Send(Command::PlayPause)]
+        );
         assert_eq!(reduce(&mut a, key('n')), vec![Effect::Send(Command::Next)]);
-        assert_eq!(reduce(&mut a, key('p')), vec![Effect::Send(Command::Previous)]);
-        assert_eq!(reduce(&mut a, key('-')), vec![Effect::Send(Command::SetVolume(95))]);
-        assert_eq!(reduce(&mut a, key('-')), vec![Effect::Send(Command::SetVolume(90))]);
-        assert_eq!(reduce(&mut a, key('s')), vec![Effect::Send(Command::SetShuffle(true))]);
-        assert_eq!(reduce(&mut a, key('r')), vec![Effect::Send(Command::SetRepeat(RepeatMode::All))]);
-        assert_eq!(reduce(&mut a, code(KeyCode::Right)), vec![Effect::Send(Command::Seek(5.0))]);
-        assert_eq!(reduce(&mut a, code(KeyCode::Left)), vec![Effect::Send(Command::Seek(0.0))]);
+        assert_eq!(
+            reduce(&mut a, key('p')),
+            vec![Effect::Send(Command::Previous)]
+        );
+        assert_eq!(
+            reduce(&mut a, key('-')),
+            vec![Effect::Send(Command::SetVolume(95))]
+        );
+        assert_eq!(
+            reduce(&mut a, key('-')),
+            vec![Effect::Send(Command::SetVolume(90))]
+        );
+        assert_eq!(
+            reduce(&mut a, key('s')),
+            vec![Effect::Send(Command::SetShuffle(true))]
+        );
+        assert_eq!(
+            reduce(&mut a, key('r')),
+            vec![Effect::Send(Command::SetRepeat(RepeatMode::All))]
+        );
+        assert_eq!(
+            reduce(&mut a, code(KeyCode::Right)),
+            vec![Effect::Send(Command::Seek(5.0))]
+        );
+        assert_eq!(
+            reduce(&mut a, code(KeyCode::Left)),
+            vec![Effect::Send(Command::Seek(0.0))]
+        );
     }
 
     #[test]
@@ -468,7 +525,11 @@ mod tests {
         let mut a = app();
         reduce(
             &mut a,
-            Action::Viz(VizEvent::Frame(crate::viz::Frame { left: vec![0.5], right: vec![], waveform: vec![] })),
+            Action::Viz(VizEvent::Frame(crate::viz::Frame {
+                left: vec![0.5],
+                right: vec![],
+                waveform: vec![],
+            })),
         );
         assert!(a.viz_frame.is_some());
         reduce(&mut a, Action::Viz(VizEvent::Fallback("simulated".into())));
@@ -481,7 +542,10 @@ mod tests {
         let mut a = app();
         let fx = reduce(
             &mut a,
-            Action::Bridge(Event::Status(PlayerStatus { state: PlayerState::Playing, ..PlayerStatus::default() })),
+            Action::Bridge(Event::Status(PlayerStatus {
+                state: PlayerState::Playing,
+                ..PlayerStatus::default()
+            })),
         );
         assert_eq!(fx, vec![Effect::Viz(Control::Playing(true))]);
         let fx = reduce(
@@ -499,8 +563,11 @@ mod tests {
     fn track_change_requests_art_once_and_result_is_kept_if_current() {
         let mut a = app();
         a.art_enabled = true;
-        let status =
-            PlayerStatus { state: PlayerState::Playing, track_id: Some(TrackId("1".into())), ..PlayerStatus::default() };
+        let status = PlayerStatus {
+            state: PlayerState::Playing,
+            track_id: Some(TrackId("1".into())),
+            ..PlayerStatus::default()
+        };
         let fx = reduce(&mut a, Action::Bridge(Event::Status(status.clone())));
         let key = crate::art::cache_key("Ann", "Album A");
         assert!(fx.contains(&Effect::LookupArt(ArtRequest {
@@ -508,11 +575,29 @@ mod tests {
             artist: "Ann".into(),
             name: "Alpha".into()
         })));
-        let fx = reduce(&mut a, Action::Bridge(Event::Status(PlayerStatus { position_secs: 5.0, ..status })));
+        let fx = reduce(
+            &mut a,
+            Action::Bridge(Event::Status(PlayerStatus {
+                position_secs: 5.0,
+                ..status
+            })),
+        );
         assert!(!fx.iter().any(|e| matches!(e, Effect::LookupArt(_))));
-        reduce(&mut a, Action::Art(ArtResult { key: key.clone(), image: Some(image::RgbImage::new(1, 1)) }));
+        reduce(
+            &mut a,
+            Action::Art(ArtResult {
+                key: key.clone(),
+                image: Some(image::RgbImage::new(1, 1)),
+            }),
+        );
         assert!(a.art.is_some());
-        reduce(&mut a, Action::Art(ArtResult { key: "stale".into(), image: Some(image::RgbImage::new(1, 1)) }));
+        reduce(
+            &mut a,
+            Action::Art(ArtResult {
+                key: "stale".into(),
+                image: Some(image::RgbImage::new(1, 1)),
+            }),
+        );
         assert_eq!(a.art.as_ref().map(|(k, _)| k.as_str()), Some(key.as_str()));
     }
 
@@ -529,7 +614,10 @@ mod tests {
                 ..PlayerStatus::default()
             })),
         );
-        assert_eq!(a.current_track().map(|t| t.name.as_str()), Some("Pretty Pure"));
+        assert_eq!(
+            a.current_track().map(|t| t.name.as_str()),
+            Some("Pretty Pure")
+        );
     }
 
     #[test]

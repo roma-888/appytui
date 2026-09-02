@@ -30,7 +30,10 @@ pub trait MusicBridge: Send {
 pub enum Command {
     LoadLibrary,
     LoadPlaylists,
-    PlayTrack { track: TrackId, context: Option<PlaylistId> },
+    PlayTrack {
+        track: TrackId,
+        context: Option<PlaylistId>,
+    },
     PlayPause,
     Next,
     Previous,

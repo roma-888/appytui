@@ -49,7 +49,8 @@ pub struct Tap {
 }
 
 fn default_output_uid() -> Result<(ca::Device, String)> {
-    let dev = ca::System::default_output_device().map_err(|e| anyhow!("default output device: {e:?}"))?;
+    let dev =
+        ca::System::default_output_device().map_err(|e| anyhow!("default output device: {e:?}"))?;
     let uid = dev.uid().map_err(|e| anyhow!("device uid: {e:?}"))?;
     Ok((dev, uid.to_string()))
 }
@@ -61,9 +62,15 @@ impl Tap {
             Some(proc_obj) => {
                 let num = ns::Number::with_u32(proc_obj.0.0);
                 let n: &ns::Number = &num;
-                (ca::TapDesc::with_stereo_mixdown_of_processes(&ns::Array::from_slice(&[n])), true)
+                (
+                    ca::TapDesc::with_stereo_mixdown_of_processes(&ns::Array::from_slice(&[n])),
+                    true,
+                )
             }
-            None => (ca::TapDesc::with_stereo_global_tap_excluding_processes(&ns::Array::new()), false),
+            None => (
+                ca::TapDesc::with_stereo_global_tap_excluding_processes(&ns::Array::new()),
+                false,
+            ),
         };
         let tap = desc.create_process_tap().map_err(|e| {
             anyhow!(
@@ -71,7 +78,9 @@ impl Tap {
             )
         })?;
         let asbd = tap.asbd().map_err(|e| anyhow!("tap format: {e:?}"))?;
-        if !asbd.format_flags.contains(cat::AudioFormatFlags::IS_FLOAT) || asbd.channels_per_frame != 2 {
+        if !asbd.format_flags.contains(cat::AudioFormatFlags::IS_FLOAT)
+            || asbd.channels_per_frame != 2
+        {
             return Err(anyhow!(
                 "unexpected tap format: {} ch, flags {:?}",
                 asbd.channels_per_frame,
@@ -81,9 +90,11 @@ impl Tap {
 
         let (output, device_uid) = default_output_uid()?;
         let output_uid = output.uid().map_err(|e| anyhow!("device uid: {e:?}"))?;
-        let sub_device = cf::DictionaryOf::with_keys_values(&[sub_keys::uid()], &[output_uid.as_type_ref()]);
+        let sub_device =
+            cf::DictionaryOf::with_keys_values(&[sub_keys::uid()], &[output_uid.as_type_ref()]);
         let tap_uid = tap.uid().map_err(|e| anyhow!("tap uid: {e:?}"))?;
-        let sub_tap = cf::DictionaryOf::with_keys_values(&[sub_keys::uid()], &[tap_uid.as_type_ref()]);
+        let sub_tap =
+            cf::DictionaryOf::with_keys_values(&[sub_keys::uid()], &[tap_uid.as_type_ref()]);
         let dict = cf::DictionaryOf::with_keys_values(
             &[
                 agg_keys::is_private(),
@@ -106,12 +117,16 @@ impl Tap {
                 &cf::ArrayOf::from_slice(&[sub_tap.as_ref()]),
             ],
         );
-        let agg = ca::AggregateDevice::with_desc(&dict).map_err(|e| anyhow!("aggregate device: {e:?}"))?;
+        let agg = ca::AggregateDevice::with_desc(&dict)
+            .map_err(|e| anyhow!("aggregate device: {e:?}"))?;
 
         let (prod, cons) = HeapRb::<f32>::new(RING_FRAMES * 2).split();
         let mut ctx = Box::new(TapCtx { prod });
-        let proc_id = agg.create_io_proc_id(io_proc, Some(&mut *ctx)).map_err(|e| anyhow!("io proc: {e:?}"))?;
-        let started = ca::device_start(agg, Some(proc_id)).map_err(|e| anyhow!("starting device: {e:?}"))?;
+        let proc_id = agg
+            .create_io_proc_id(io_proc, Some(&mut *ctx))
+            .map_err(|e| anyhow!("io proc: {e:?}"))?;
+        let started =
+            ca::device_start(agg, Some(proc_id)).map_err(|e| anyhow!("starting device: {e:?}"))?;
 
         Ok(Tap {
             _started: started,
@@ -146,7 +161,9 @@ impl Tap {
 
     /// True when the default output device is no longer the one we tapped.
     pub fn device_changed(&self) -> bool {
-        default_output_uid().map(|(_, uid)| uid != self.device_uid).unwrap_or(false)
+        default_output_uid()
+            .map(|(_, uid)| uid != self.device_uid)
+            .unwrap_or(false)
     }
 }
 
@@ -159,13 +176,22 @@ mod tests {
             .args(["-x", "Music"])
             .output()
             .ok()
-            .and_then(|o| String::from_utf8_lossy(&o.stdout).lines().next().and_then(|l| l.trim().parse().ok()))
+            .and_then(|o| {
+                String::from_utf8_lossy(&o.stdout)
+                    .lines()
+                    .next()
+                    .and_then(|l| l.trim().parse().ok())
+            })
     }
 
     /// Open a tap, sample it for a while, report (samples, rms) over the whole window.
     fn measure(pid: Option<u32>, secs: u64) -> (usize, f32) {
         let mut tap = Tap::open(pid).unwrap();
-        println!("process tap: {} at {} Hz", tap.is_process_tap(), tap.sample_rate());
+        println!(
+            "process tap: {} at {} Hz",
+            tap.is_process_tap(),
+            tap.sample_rate()
+        );
         let mut total = 0usize;
         let mut sq = 0.0f32;
         let mut out = Vec::new();

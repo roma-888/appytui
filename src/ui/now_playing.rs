@@ -29,12 +29,20 @@ pub fn layout(inner: Rect) -> Areas {
         Constraint::Length(1),
     ])
     .areas(inner);
-    Areas { art, info, progress, viz, flags }
+    Areas {
+        art,
+        info,
+        progress,
+        viz,
+        flags,
+    }
 }
 
 pub fn draw(frame: &mut Frame, app: &mut App, p: &Palette, area: Rect) {
-    let block =
-        Block::default().borders(Borders::ALL).title(" Now Playing ").border_style(Style::default().fg(p.dim));
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Now Playing ")
+        .border_style(Style::default().fg(p.dim));
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let areas = layout(inner);
@@ -55,7 +63,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, p: &Palette, area: Rect) {
     if let Some((_, img)) = &app.art
         && areas.art.height > 0
     {
-        let cells = crate::art::render::to_cells(img, areas.art.width.min(areas.art.height * 2), areas.art.height);
+        let cells = crate::art::render::to_cells(
+            img,
+            areas.art.width.min(areas.art.height * 2),
+            areas.art.height,
+        );
         let cols = cells.first().map(|r| r.len() as u16).unwrap_or(0);
         let x0 = areas.art.x + (areas.art.width - cols) / 2;
         for (dy, row) in cells.iter().enumerate() {
@@ -69,7 +81,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, p: &Palette, area: Rect) {
     }
 
     let Some(track) = app.current_track().cloned() else {
-        frame.render_widget(Paragraph::new("Nothing playing").style(Style::default().fg(p.dim)), areas.info);
+        frame.render_widget(
+            Paragraph::new("Nothing playing").style(Style::default().fg(p.dim)),
+            areas.info,
+        );
         return;
     };
 
@@ -79,19 +94,35 @@ pub fn draw(frame: &mut Frame, app: &mut App, p: &Palette, area: Rect) {
         PlayerState::Stopped => "■",
     };
     let info = vec![
-        Line::from(Span::styled(track.name.clone(), Style::default().fg(p.highlight).add_modifier(Modifier::BOLD))),
+        Line::from(Span::styled(
+            track.name.clone(),
+            Style::default()
+                .fg(p.highlight)
+                .add_modifier(Modifier::BOLD),
+        )),
         Line::from(track.artist.clone()),
-        Line::from(Span::styled(track.album.clone(), Style::default().fg(p.dim))),
+        Line::from(Span::styled(
+            track.album.clone(),
+            Style::default().fg(p.dim),
+        )),
     ];
     frame.render_widget(Paragraph::new(info), areas.info);
 
     let pos = app.position_now();
-    let ratio = if track.duration_secs > 0.0 { (pos / track.duration_secs).clamp(0.0, 1.0) } else { 0.0 };
+    let ratio = if track.duration_secs > 0.0 {
+        (pos / track.duration_secs).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
     let gauge = LineGauge::default()
         .ratio(ratio)
         .filled_style(Style::default().fg(p.accent))
         .unfilled_style(Style::default().fg(p.dim))
-        .label(format!("{icon} {} / {}", fmt_duration(pos), fmt_duration(track.duration_secs)));
+        .label(format!(
+            "{icon} {} / {}",
+            fmt_duration(pos),
+            fmt_duration(track.duration_secs)
+        ));
     frame.render_widget(gauge, areas.progress);
 
     let flags = format!(
@@ -100,5 +131,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, p: &Palette, area: Rect) {
         app.status.repeat.as_str(),
         app.status.volume
     );
-    frame.render_widget(Line::from(flags).style(Style::default().fg(p.dim)), areas.flags);
+    frame.render_widget(
+        Line::from(flags).style(Style::default().fg(p.dim)),
+        areas.flags,
+    );
 }

@@ -32,9 +32,18 @@ pub struct Theme {
 }
 
 const BUILTINS: &[(&str, &str)] = &[
-    ("catppuccin-mocha", include_str!("../../themes/catppuccin-mocha")),
-    ("catppuccin-mocha-h", include_str!("../../themes/catppuccin-mocha-h")),
-    ("solarized_dark", include_str!("../../themes/solarized_dark")),
+    (
+        "catppuccin-mocha",
+        include_str!("../../themes/catppuccin-mocha"),
+    ),
+    (
+        "catppuccin-mocha-h",
+        include_str!("../../themes/catppuccin-mocha-h"),
+    ),
+    (
+        "solarized_dark",
+        include_str!("../../themes/solarized_dark"),
+    ),
     ("tricolor", include_str!("../../themes/tricolor")),
     ("terminal", include_str!("../../themes/terminal")),
 ];
@@ -78,10 +87,16 @@ impl Theme {
 
         for line in text.lines() {
             let line = line.trim();
-            if line.is_empty() || line.starts_with('#') || line.starts_with(';') || line.starts_with('[') {
+            if line.is_empty()
+                || line.starts_with('#')
+                || line.starts_with(';')
+                || line.starts_with('[')
+            {
                 continue;
             }
-            let Some((key, val)) = line.split_once('=') else { continue };
+            let Some((key, val)) = line.split_once('=') else {
+                continue;
+            };
             let (key, val) = (key.trim(), val.trim());
             match key {
                 "gradient" => gradient_on = val == "1",
@@ -115,13 +130,23 @@ impl Theme {
         }
         stops.sort_by_key(|(i, _)| *i);
         hstops.sort_by_key(|(i, _)| *i);
-        let gradient: Vec<Rgb> = if gradient_on { stops.into_iter().map(|(_, c)| c).collect() } else { Vec::new() };
-        let horizontal_gradient: Vec<Rgb> =
-            if hgradient_on { hstops.into_iter().map(|(_, c)| c).collect() } else { Vec::new() };
+        let gradient: Vec<Rgb> = if gradient_on {
+            stops.into_iter().map(|(_, c)| c).collect()
+        } else {
+            Vec::new()
+        };
+        let horizontal_gradient: Vec<Rgb> = if hgradient_on {
+            hstops.into_iter().map(|(_, c)| c).collect()
+        } else {
+            Vec::new()
+        };
 
         let fallback_fg = foreground.unwrap_or(Rgb(204, 204, 204));
         let first = gradient.first().copied().unwrap_or(fallback_fg);
-        let middle = gradient.get(gradient.len() / 2).copied().unwrap_or(fallback_fg);
+        let middle = gradient
+            .get(gradient.len() / 2)
+            .copied()
+            .unwrap_or(fallback_fg);
         Ok(Theme {
             name: name.to_string(),
             gradient,
@@ -137,13 +162,21 @@ impl Theme {
     }
 
     pub fn builtin(name: &str) -> Option<Theme> {
-        BUILTINS.iter().find(|(n, _)| *n == name).and_then(|(n, text)| Theme::parse(n, text).ok())
+        BUILTINS
+            .iter()
+            .find(|(n, _)| *n == name)
+            .and_then(|(n, text)| Theme::parse(n, text).ok())
     }
 
     /// `~/.config/appytui/themes`, then `~/.config/cava/themes`.
     pub fn user_dirs() -> Vec<PathBuf> {
-        let Some(cfg) = dirs::config_dir() else { return Vec::new() };
-        vec![cfg.join("appytui").join("themes"), cfg.join("cava").join("themes")]
+        let Some(cfg) = dirs::config_dir() else {
+            return Vec::new();
+        };
+        vec![
+            cfg.join("appytui").join("themes"),
+            cfg.join("cava").join("themes"),
+        ]
     }
 
     /// Search `dirs` in order for a file called `name`, then fall back to built-ins.
@@ -160,16 +193,24 @@ impl Theme {
     }
 
     /// Colour at position `t` in 0..=1 along the vertical gradient (0 = bottom).
-        /// Falls back to the foreground colour when there is no gradient.
+    /// Falls back to the foreground colour when there is no gradient.
     pub fn gradient_at(&self, t: f32) -> Rgb {
-        gradient_at(&self.gradient, self.foreground.unwrap_or(Rgb(204, 204, 204)), t)
+        gradient_at(
+            &self.gradient,
+            self.foreground.unwrap_or(Rgb(204, 204, 204)),
+            t,
+        )
     }
 
-        pub fn horizontal_gradient_at(&self, t: f32) -> Option<Rgb> {
+    pub fn horizontal_gradient_at(&self, t: f32) -> Option<Rgb> {
         if self.horizontal_gradient.is_empty() {
             None
         } else {
-            Some(gradient_at(&self.horizontal_gradient, self.horizontal_gradient[0], t))
+            Some(gradient_at(
+                &self.horizontal_gradient,
+                self.horizontal_gradient[0],
+                t,
+            ))
         }
     }
 }
@@ -192,7 +233,10 @@ pub fn lerp(a: Rgb, b: Rgb, t: f32) -> Rgb {
 }
 
 pub fn terminal_supports_truecolor() -> bool {
-    matches!(std::env::var("COLORTERM").as_deref(), Ok("truecolor") | Ok("24bit"))
+    matches!(
+        std::env::var("COLORTERM").as_deref(),
+        Ok("truecolor") | Ok("24bit")
+    )
 }
 
 /// Nearest xterm-256 index for an RGB colour (6x6x6 cube or grey ramp).
@@ -213,17 +257,29 @@ fn quantise_256(c: Rgb) -> u8 {
         + (cube_val(g) - c.1 as i32).pow(2)
         + (cube_val(b) - c.2 as i32).pow(2);
     let avg = (c.0 as i32 + c.1 as i32 + c.2 as i32) / 3;
-    let grey_level = if avg > 238 { 23 } else { ((avg - 3) / 10).max(0) };
+    let grey_level = if avg > 238 {
+        23
+    } else {
+        ((avg - 3) / 10).max(0)
+    };
     let grey_val = 8 + 10 * grey_level;
     let grey_dist = 3 * (grey_val - avg).pow(2)
         + (c.0 as i32 - avg).pow(2)
         + (c.1 as i32 - avg).pow(2)
         + (c.2 as i32 - avg).pow(2);
-    if grey_dist < cube_dist { (232 + grey_level) as u8 } else { cube_idx }
+    if grey_dist < cube_dist {
+        (232 + grey_level) as u8
+    } else {
+        cube_idx
+    }
 }
 
 pub fn to_color(rgb: Rgb, truecolor: bool) -> Color {
-    if truecolor { Color::Rgb(rgb.0, rgb.1, rgb.2) } else { Color::Indexed(quantise_256(rgb)) }
+    if truecolor {
+        Color::Rgb(rgb.0, rgb.1, rgb.2)
+    } else {
+        Color::Indexed(quantise_256(rgb))
+    }
 }
 
 #[cfg(test)]
@@ -243,7 +299,11 @@ mod tests {
 
     #[test]
     fn gradient_zero_means_flat_foreground() {
-        let t = Theme::parse("x", "[color]\ngradient = 0\ngradient_color_1 = '#112233'\nforeground = cyan\n").unwrap();
+        let t = Theme::parse(
+            "x",
+            "[color]\ngradient = 0\ngradient_color_1 = '#112233'\nforeground = cyan\n",
+        )
+        .unwrap();
         assert!(t.gradient.is_empty());
         assert_eq!(t.foreground, Some(Rgb(0, 255, 255)));
     }
@@ -269,7 +329,13 @@ mod tests {
 
     #[test]
     fn all_builtins_parse() {
-        for name in ["catppuccin-mocha", "catppuccin-mocha-h", "solarized_dark", "tricolor", "terminal"] {
+        for name in [
+            "catppuccin-mocha",
+            "catppuccin-mocha-h",
+            "solarized_dark",
+            "tricolor",
+            "terminal",
+        ] {
             assert!(Theme::builtin(name).is_some(), "{name}");
         }
         assert!(Theme::builtin("nope").is_none());
@@ -279,7 +345,11 @@ mod tests {
     fn load_prefers_user_dir_over_builtin() {
         let dir = std::env::temp_dir().join(format!("appytui-themes-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("catppuccin-mocha"), "gradient = 1\ngradient_color_1 = '#123456'\n").unwrap();
+        std::fs::write(
+            dir.join("catppuccin-mocha"),
+            "gradient = 1\ngradient_color_1 = '#123456'\n",
+        )
+        .unwrap();
         let t = Theme::load("catppuccin-mocha", std::slice::from_ref(&dir)).unwrap();
         assert_eq!(t.gradient, vec![Rgb(0x12, 0x34, 0x56)]);
         std::fs::remove_dir_all(&dir).unwrap();
@@ -288,7 +358,11 @@ mod tests {
 
     #[test]
     fn gradient_at_interpolates() {
-        let t = Theme::parse("x", "gradient = 1\ngradient_color_1 = '#000000'\ngradient_color_2 = '#0000ff'\n").unwrap();
+        let t = Theme::parse(
+            "x",
+            "gradient = 1\ngradient_color_1 = '#000000'\ngradient_color_2 = '#0000ff'\n",
+        )
+        .unwrap();
         assert_eq!(t.gradient_at(0.0), Rgb(0, 0, 0));
         assert_eq!(t.gradient_at(1.0), Rgb(0, 0, 255));
         assert_eq!(t.gradient_at(0.5), Rgb(0, 0, 128));

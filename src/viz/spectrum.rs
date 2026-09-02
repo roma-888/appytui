@@ -57,7 +57,11 @@ impl Smoother {
                     (prev - gravity * f * f).max(r)
                 };
                 let v = (prev * integral + target * (1.0 - integral)).min(target.max(r));
-                let v = if r >= prev { v.max(r * (1.0 - integral)) } else { v };
+                let v = if r >= prev {
+                    v.max(r * (1.0 - integral))
+                } else {
+                    v
+                };
                 self.value[i] = v.clamp(0.0, 1.0);
                 self.value[i]
             })
@@ -77,7 +81,11 @@ pub fn monstercat(bars: &mut [f32], waves: bool) {
                 continue;
             }
             let d = (i as isize - j as isize).unsigned_abs() as f32;
-            let lifted = if waves { src[i] - d * d * 0.02 } else { src[i] / 1.5f32.powf(d) };
+            let lifted = if waves {
+                src[i] - d * d * 0.02
+            } else {
+                src[i] / 1.5f32.powf(d)
+            };
             if lifted > bars[j] {
                 bars[j] = lifted;
             }
@@ -103,7 +111,9 @@ impl Analyzer {
         let mut planner = FftPlanner::<f32>::new();
         let fft = planner.plan_fft_forward(FFT_SIZE);
         let window = (0..FFT_SIZE)
-            .map(|i| 0.5 - 0.5 * (2.0 * std::f32::consts::PI * i as f32 / (FFT_SIZE as f32 - 1.0)).cos())
+            .map(|i| {
+                0.5 - 0.5 * (2.0 * std::f32::consts::PI * i as f32 / (FFT_SIZE as f32 - 1.0)).cos()
+            })
             .collect();
         let mut a = Analyzer {
             settings: settings.clone(),
@@ -132,9 +142,12 @@ impl Analyzer {
     pub fn set_bars(&mut self, n: usize) {
         let n = n.max(1);
         let lo = self.settings.lower_cutoff_freq.max(1) as f32;
-        let hi = (self.settings.higher_cutoff_freq as f32).min(self.sample_rate / 2.0).max(lo * 1.1);
-        let bin_of =
-            |f: f32| ((f * FFT_SIZE as f32 / self.sample_rate).round() as usize).clamp(1, FFT_SIZE / 2 - 1);
+        let hi = (self.settings.higher_cutoff_freq as f32)
+            .min(self.sample_rate / 2.0)
+            .max(lo * 1.1);
+        let bin_of = |f: f32| {
+            ((f * FFT_SIZE as f32 / self.sample_rate).round() as usize).clamp(1, FFT_SIZE / 2 - 1)
+        };
         self.bands = (0..n)
             .map(|k| {
                 let f0 = lo * (hi / lo).powf(k as f32 / n as f32);
@@ -155,7 +168,9 @@ impl Analyzer {
     #[cfg(test)]
     pub fn band_for_freq(&self, freq: f32) -> Option<usize> {
         let bin = (freq * FFT_SIZE as f32 / self.sample_rate).round() as usize;
-        self.bands.iter().position(|(lo, hi)| bin >= *lo && bin < *hi)
+        self.bands
+            .iter()
+            .position(|(lo, hi)| bin >= *lo && bin < *hi)
     }
 
     /// `interleaved` holds L/R pairs; the newest `FFT_SIZE` frames are analysed.
@@ -164,7 +179,10 @@ impl Analyzer {
         let start = frames.saturating_sub(FFT_SIZE) * 2;
         let recent = &interleaved[start..];
         let mut left: Vec<f32> = recent.chunks(2).map(|c| c[0]).collect();
-        let mut right: Vec<f32> = recent.chunks(2).map(|c| c.get(1).copied().unwrap_or(c[0])).collect();
+        let mut right: Vec<f32> = recent
+            .chunks(2)
+            .map(|c| c.get(1).copied().unwrap_or(c[0]))
+            .collect();
         left.resize(FFT_SIZE, 0.0);
         right.resize(FFT_SIZE, 0.0);
 
@@ -181,18 +199,30 @@ impl Analyzer {
                 let mono: Vec<f32> = match self.settings.mono_option {
                     MonoOption::Left => left,
                     MonoOption::Right => right,
-                    MonoOption::Average => left.iter().zip(&right).map(|(l, r)| (l + r) * 0.5).collect(),
+                    MonoOption::Average => left
+                        .iter()
+                        .zip(&right)
+                        .map(|(l, r)| (l + r) * 0.5)
+                        .collect(),
                 };
                 let raw = self.magnitudes(&mono);
                 let bars = self.finish(0, raw, noise);
-                Frame { left: bars, right: Vec::new(), waveform }
+                Frame {
+                    left: bars,
+                    right: Vec::new(),
+                    waveform,
+                }
             }
             Channels::Stereo => {
                 let raw_l = self.magnitudes(&left);
                 let raw_r = self.magnitudes(&right);
                 let l = self.finish(0, raw_l, noise);
                 let r = self.finish(1, raw_r, noise);
-                Frame { left: l, right: r, waveform }
+                Frame {
+                    left: l,
+                    right: r,
+                    waveform,
+                }
             }
         }
     }
@@ -227,7 +257,10 @@ impl Analyzer {
         }
         let gain = self.settings.sensitivity.max(1) as f32 / 100.0;
         let floor = self.peak_db - 60.0;
-        let mut bars: Vec<f32> = db.iter().map(|d| (((d - floor) / 60.0) * gain).clamp(0.0, 1.0)).collect();
+        let mut bars: Vec<f32> = db
+            .iter()
+            .map(|d| (((d - floor) / 60.0) * gain).clamp(0.0, 1.0))
+            .collect();
         // Digital silence sits at the log epsilon (-140 dB); render it as empty.
         if max_db < -120.0 {
             bars.iter_mut().for_each(|b| *b = 0.0);
@@ -253,7 +286,12 @@ mod tests {
     }
 
     fn mono_settings() -> VizSettings {
-        VizSettings { channels: Channels::Mono, monstercat: false, waves: false, ..VizSettings::default() }
+        VizSettings {
+            channels: Channels::Mono,
+            monstercat: false,
+            waves: false,
+            ..VizSettings::default()
+        }
     }
 
     #[test]
@@ -285,16 +323,28 @@ mod tests {
             f = a.analyze(&samples);
         }
         let expected = a.band_for_freq(440.0).unwrap();
-        let (best, _) = f.left.iter().enumerate().max_by(|x, y| x.1.total_cmp(y.1)).unwrap();
+        let (best, _) = f
+            .left
+            .iter()
+            .enumerate()
+            .max_by(|x, y| x.1.total_cmp(y.1))
+            .unwrap();
         assert_eq!(best, expected, "{:?}", f.left);
         assert!(f.left[best] > 0.5);
     }
 
     #[test]
     fn stereo_analyses_both_channels() {
-        let s = VizSettings { monstercat: false, waves: false, ..VizSettings::default() };
+        let s = VizSettings {
+            monstercat: false,
+            waves: false,
+            ..VizSettings::default()
+        };
         let mut a = Analyzer::new(&s, 48000.0, 8);
-        let samples: Vec<f32> = sine(1000.0, 48000.0, FFT_SIZE).chunks(2).flat_map(|c| [c[0], 0.0]).collect();
+        let samples: Vec<f32> = sine(1000.0, 48000.0, FFT_SIZE)
+            .chunks(2)
+            .flat_map(|c| [c[0], 0.0])
+            .collect();
         let mut f = Frame::default();
         for _ in 0..5 {
             f = a.analyze(&samples);

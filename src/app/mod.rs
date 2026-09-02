@@ -85,7 +85,10 @@ impl App {
     /// snapshot Music.app reported (streamed tracks are often not in the library).
     pub fn current_track(&self) -> Option<&Track> {
         let id = self.status.track_id.as_ref()?;
-        self.library.as_ref().and_then(|l| l.get(id)).or(self.status.track.as_ref())
+        self.library
+            .as_ref()
+            .and_then(|l| l.get(id))
+            .or(self.status.track.as_ref())
     }
 
     /// Player position interpolated from the last status poll.
@@ -108,38 +111,64 @@ impl App {
 
     /// Visible rows for `tab`, honouring drill-down and the filter.
     pub fn rows(&mut self, tab: Tab) -> Vec<Row> {
-        let Some(lib) = self.library.as_ref() else { return Vec::new() };
+        let Some(lib) = self.library.as_ref() else {
+            return Vec::new();
+        };
         let view = &self.views[tab.index()];
         let unfiltered: Vec<Row> = match (tab, view.drill) {
             (Tab::Songs, _) => (0..lib.tracks.len()).map(Row::Track).collect(),
             (Tab::Albums, Drill::Top) => (0..lib.albums.len()).map(Row::Album).collect(),
-            (Tab::Albums, Drill::Album(a)) => lib.albums[a].tracks.iter().map(|&i| Row::Track(i)).collect(),
+            (Tab::Albums, Drill::Album(a)) => lib.albums[a]
+                .tracks
+                .iter()
+                .map(|&i| Row::Track(i))
+                .collect(),
             (Tab::Artists, Drill::Top) => (0..lib.artists.len()).map(Row::Artist).collect(),
-            (Tab::Artists, Drill::Artist(a)) => lib.artists[a].tracks.iter().map(|&i| Row::Track(i)).collect(),
+            (Tab::Artists, Drill::Artist(a)) => lib.artists[a]
+                .tracks
+                .iter()
+                .map(|&i| Row::Track(i))
+                .collect(),
             (Tab::Playlists, Drill::Top) => (0..self.playlists.len()).map(Row::Playlist).collect(),
-            (Tab::Playlists, Drill::Playlist(p)) => {
-                self.playlists[p].track_ids.iter().filter_map(|id| lib.index_of(id)).map(Row::Track).collect()
-            }
+            (Tab::Playlists, Drill::Playlist(p)) => self.playlists[p]
+                .track_ids
+                .iter()
+                .filter_map(|id| lib.index_of(id))
+                .map(Row::Track)
+                .collect(),
             (Tab::Search, _) => (0..lib.tracks.len()).map(Row::Track).collect(),
-            (Tab::Queue, _) => {
-                self.context.upcoming().iter().filter_map(|id| lib.index_of(id)).map(Row::Track).collect()
-            }
+            (Tab::Queue, _) => self
+                .context
+                .upcoming()
+                .iter()
+                .filter_map(|id| lib.index_of(id))
+                .map(Row::Track)
+                .collect(),
             _ => Vec::new(),
         };
         let query = view.filter.clone();
         if query.trim().is_empty() {
             // Search shows nothing until something is typed.
-            return if tab == Tab::Search { Vec::new() } else { unfiltered };
+            return if tab == Tab::Search {
+                Vec::new()
+            } else {
+                unfiltered
+            };
         }
-        let items: Vec<(usize, String)> =
-            unfiltered.iter().enumerate().map(|(i, row)| (i, self.row_text(*row))).collect();
+        let items: Vec<(usize, String)> = unfiltered
+            .iter()
+            .enumerate()
+            .map(|(i, row)| (i, self.row_text(*row)))
+            .collect();
         let ranked = self.filter.rank(&query, &items);
         ranked.into_iter().map(|i| unfiltered[i]).collect()
     }
 
     /// Text the fuzzy filter matches against.
     pub fn row_text(&self, row: Row) -> String {
-        let Some(lib) = self.library.as_ref() else { return String::new() };
+        let Some(lib) = self.library.as_ref() else {
+            return String::new();
+        };
         match row {
             Row::Track(i) => {
                 let t = &lib.tracks[i];

@@ -16,7 +16,10 @@ pub struct FakeBridge {
 
 impl FakeBridge {
     pub fn with_tracks(tracks: Vec<Track>) -> Self {
-        Self { tracks, ..Default::default() }
+        Self {
+            tracks,
+            ..Default::default()
+        }
     }
 }
 
@@ -48,7 +51,11 @@ impl MusicBridge for FakeBridge {
         Ok(4242)
     }
     fn play_track(&mut self, track: &TrackId, context: Option<&PlaylistId>) -> Result<()> {
-        self.calls.push(format!("play_track {} {:?}", track.0, context.map(|c| c.0.clone())));
+        self.calls.push(format!(
+            "play_track {} {:?}",
+            track.0,
+            context.map(|c| c.0.clone())
+        ));
         self.status.state = PlayerState::Playing;
         self.status.track_id = Some(track.clone());
         self.status.position_secs = 0.0;

@@ -31,13 +31,20 @@ pub struct Library {
 /// Case-insensitive sort key ignoring a leading "The ".
 pub fn sort_key(s: &str) -> String {
     let lower = s.trim().to_lowercase();
-    lower.strip_prefix("the ").map(str::to_string).unwrap_or(lower)
+    lower
+        .strip_prefix("the ")
+        .map(str::to_string)
+        .unwrap_or(lower)
 }
 
 impl Library {
     pub fn new(mut tracks: Vec<Track>) -> Library {
         tracks.sort_by_cached_key(|t| (sort_key(&t.name), sort_key(&t.artist)));
-        let by_id = tracks.iter().enumerate().map(|(i, t)| (t.id.clone(), i)).collect();
+        let by_id = tracks
+            .iter()
+            .enumerate()
+            .map(|(i, t)| (t.id.clone(), i))
+            .collect();
 
         let mut album_map: HashMap<(String, String), (String, String, Vec<usize>)> = HashMap::new();
         let mut artist_map: HashMap<String, (String, Vec<usize>)> = HashMap::new();
@@ -48,15 +55,24 @@ impl Library {
                 .or_insert_with(|| (artist.clone(), t.album.clone(), Vec::new()))
                 .2
                 .push(i);
-            artist_map.entry(sort_key(&artist)).or_insert_with(|| (artist.clone(), Vec::new())).1.push(i);
+            artist_map
+                .entry(sort_key(&artist))
+                .or_insert_with(|| (artist.clone(), Vec::new()))
+                .1
+                .push(i);
         }
 
-        let disc_track = |tracks: &[Track], i: usize| (tracks[i].disc_number, tracks[i].track_number);
+        let disc_track =
+            |tracks: &[Track], i: usize| (tracks[i].disc_number, tracks[i].track_number);
         let mut albums: Vec<AlbumEntry> = album_map
             .into_values()
             .map(|(artist, album, mut idx)| {
                 idx.sort_by_key(|&i| disc_track(&tracks, i));
-                AlbumEntry { artist, album, tracks: idx }
+                AlbumEntry {
+                    artist,
+                    album,
+                    tracks: idx,
+                }
             })
             .collect();
         albums.sort_by_cached_key(|a| (sort_key(&a.album), sort_key(&a.artist)));
@@ -70,7 +86,12 @@ impl Library {
             .collect();
         artists.sort_by_cached_key(|a| sort_key(&a.name));
 
-        Library { tracks, by_id, albums, artists }
+        Library {
+            tracks,
+            by_id,
+            albums,
+            artists,
+        }
     }
 
     pub fn index_of(&self, id: &TrackId) -> Option<usize> {
@@ -109,10 +130,28 @@ mod tests {
             t("3", "C song", "The Alphas", "A Album", 1, 1),
             t("4", "D song", "Zed", "Y Album", 2, 1),
         ]);
-        assert_eq!(lib.artists.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(), vec!["The Alphas", "Zed"]);
-        assert_eq!(lib.albums.iter().map(|a| a.album.as_str()).collect::<Vec<_>>(), vec!["A Album", "Y Album", "Z Album"]);
+        assert_eq!(
+            lib.artists
+                .iter()
+                .map(|a| a.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["The Alphas", "Zed"]
+        );
+        assert_eq!(
+            lib.albums
+                .iter()
+                .map(|a| a.album.as_str())
+                .collect::<Vec<_>>(),
+            vec!["A Album", "Y Album", "Z Album"]
+        );
         let z = &lib.albums[2];
-        assert_eq!(z.tracks.iter().map(|&i| lib.tracks[i].id.0.as_str()).collect::<Vec<_>>(), vec!["2", "1"]);
+        assert_eq!(
+            z.tracks
+                .iter()
+                .map(|&i| lib.tracks[i].id.0.as_str())
+                .collect::<Vec<_>>(),
+            vec!["2", "1"]
+        );
         assert_eq!(lib.artists[1].tracks.len(), 3);
     }
 
