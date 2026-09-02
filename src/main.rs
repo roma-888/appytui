@@ -133,6 +133,13 @@ fn run(args: cli::Args) -> Result<()> {
 
     let mut app = App::new(theme, viz, art_enabled);
     if let Some(picker) = picker {
+        let fs = picker.font_size();
+        app.notify(format!(
+            "album art: {:?} ({}x{} px cells)",
+            picker.protocol_type(),
+            fs.width,
+            fs.height
+        ));
         app.picker = picker;
     }
     let mut terminal = ratatui::init();
