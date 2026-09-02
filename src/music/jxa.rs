@@ -81,6 +81,9 @@ for (const p of Music.userPlaylists()) {
 JSON.stringify(out);
 "#;
 
+// Every property read is one Apple Event (~17 ms), so the nine-field track
+// snapshot is only taken when the track id differs from ARGS.known; the bridge
+// fills it back in from its cache otherwise.
 const STATUS: &str = r#"
 const st = Music.playerState();
 let track_id = null, track = null;
@@ -88,10 +91,12 @@ if (st !== "stopped") {
   try {
     const t = Music.currentTrack;
     track_id = t.persistentID();
-    // Snapshot so streamed tracks that are not in the library still show up.
-    track = { id: track_id, name: t.name() || "", artist: t.artist() || "", album: t.album() || "",
-      album_artist: t.albumArtist() || "", duration_secs: t.duration() || 0,
-      track_number: t.trackNumber() || 0, disc_number: t.discNumber() || 0, year: t.year() || 0 };
+    if (track_id !== ARGS.known) {
+      // Snapshot so streamed tracks that are not in the library still show up.
+      track = { id: track_id, name: t.name() || "", artist: t.artist() || "", album: t.album() || "",
+        album_artist: t.albumArtist() || "", duration_secs: t.duration() || 0,
+        track_number: t.trackNumber() || 0, disc_number: t.discNumber() || 0, year: t.year() || 0 };
+    }
   } catch (e) {}
 }
 // Position last: it is the value the clock anchors to, so read it as close
@@ -244,6 +249,24 @@ impl Drop for Server {
 pub struct JxaBridge {
     timeout: Duration,
     server: Option<Server>,
+    /// Snapshot of the last track seen, so the status poll can skip re-reading it.
+    last_track: Option<Track>,
+}
+
+/// Remember a fresh track snapshot, or restore the cached one when the poll
+/// skipped it because the track id was unchanged.
+fn fill_track(status: &mut PlayerStatus, cache: &mut Option<Track>) {
+    match (&status.track, &status.track_id) {
+        (Some(track), _) => *cache = Some(track.clone()),
+        (None, Some(id)) => {
+            if let Some(cached) = cache.as_ref()
+                && cached.id == *id
+            {
+                status.track = Some(cached.clone());
+            }
+        }
+        (None, None) => {}
+    }
 }
 
 impl JxaBridge {
@@ -251,6 +274,7 @@ impl JxaBridge {
         Self {
             timeout: TIMEOUT,
             server: None,
+            last_track: None,
         }
     }
 
@@ -321,7 +345,10 @@ impl MusicBridge for JxaBridge {
         )?)
     }
     fn status(&mut self) -> Result<PlayerStatus> {
-        parse_status(&self.run(STATUS, json!({}))?)
+        let known = self.last_track.as_ref().map(|t| t.id.0.clone());
+        let mut status = parse_status(&self.run(STATUS, json!({ "known": known }))?)?;
+        fill_track(&mut status, &mut self.last_track);
+        Ok(status)
     }
     fn music_pid(&mut self) -> Result<u32> {
         let out = Proc::new("pgrep")
@@ -371,6 +398,7 @@ impl MusicBridge for JxaBridge {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::music::model::PlayerState;
 
     #[test]
     fn parse_functions_accept_captured_output() {
@@ -406,6 +434,39 @@ mod tests {
         assert_eq!(second.as_ref(), Some(&ids[1]));
         let playlists = b.load_playlists().unwrap();
         assert!(playlists.iter().all(|p| p.name != OWN_PLAYLIST));
+    }
+
+    fn status_with(track_id: Option<&str>, track: Option<Track>) -> PlayerStatus {
+        PlayerStatus {
+            state: PlayerState::Playing,
+            track_id: track_id.map(|t| TrackId(t.into())),
+            track,
+            ..PlayerStatus::default()
+        }
+    }
+
+    #[test]
+    fn fill_track_caches_a_snapshot_and_reuses_it_for_the_same_id() {
+        let snap = crate::music::fake::track("X", "Song", "Artist", "Album");
+        let mut cache = None;
+        let mut first = status_with(Some("X"), Some(snap.clone()));
+        fill_track(&mut first, &mut cache);
+        assert_eq!(cache.as_ref(), Some(&snap));
+        let mut next = status_with(Some("X"), None);
+        fill_track(&mut next, &mut cache);
+        assert_eq!(next.track.as_ref(), Some(&snap));
+    }
+
+    #[test]
+    fn fill_track_does_not_reuse_a_snapshot_for_another_id() {
+        let mut cache = Some(crate::music::fake::track("X", "Song", "Artist", "Album"));
+        let mut other = status_with(Some("Y"), None);
+        fill_track(&mut other, &mut cache);
+        assert_eq!(other.track, None);
+        let mut stopped = status_with(None, None);
+        stopped.state = PlayerState::Stopped;
+        fill_track(&mut stopped, &mut cache);
+        assert_eq!(stopped.track, None);
     }
 
     #[test]
@@ -472,6 +533,12 @@ mod tests {
         b.ensure_running().unwrap();
         let s = b.status().unwrap();
         println!("{s:?}");
+        // The second poll skips the track snapshot but must still carry it.
+        let t0 = Instant::now();
+        let again = b.status().unwrap();
+        println!("second status poll took {:?}", t0.elapsed());
+        assert_eq!(again.track_id, s.track_id);
+        assert_eq!(again.track.is_some(), s.track.is_some());
         let lib = b.load_library().unwrap();
         assert!(!lib.is_empty());
         assert!(b.music_pid().unwrap() > 0);
