@@ -16,6 +16,9 @@ use queue::PlayContext;
 use views::{Drill, Filter, Row, Tab, TabView};
 
 pub const MESSAGE_TTL: Duration = Duration::from_secs(5);
+/// After a volume/shuffle/repeat key, ignore those fields from status polls
+/// that were already in flight, so they cannot undo the optimistic update.
+pub const OPTIMISTIC_WINDOW: Duration = Duration::from_millis(1500);
 
 pub struct App {
     pub library: Option<Library>,
@@ -26,6 +29,8 @@ pub struct App {
     pub editing_filter: bool,
     pub status: PlayerStatus,
     pub status_at: Instant,
+    /// Set when a transport key changed volume/shuffle/repeat locally.
+    pub optimistic_at: Option<Instant>,
     pub context: PlayContext,
     pub message: Option<(String, Instant)>,
     pub show_help: bool,
@@ -55,6 +60,7 @@ impl App {
             editing_filter: false,
             status: PlayerStatus::default(),
             status_at: Instant::now(),
+            optimistic_at: None,
             context: PlayContext::default(),
             message: None,
             show_help: false,

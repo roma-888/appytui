@@ -7,7 +7,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use super::library::Library;
 use super::queue::PlayContext;
 use super::views::{Drill, Row, Tab};
-use super::{App, MESSAGE_TTL};
+use super::{App, MESSAGE_TTL, OPTIMISTIC_WINDOW};
 use crate::art::{ArtRequest, ArtResult};
 use crate::config::Orientation;
 use crate::music::model::{PlayerState, TrackId};
@@ -76,6 +76,15 @@ fn on_bridge(app: &mut App, ev: Event) -> Vec<Effect> {
             let was_playing = app.status.state == PlayerState::Playing;
             if let Some(id) = &s.track_id {
                 app.context.resync(id);
+            }
+            let mut s = s;
+            if app
+                .optimistic_at
+                .is_some_and(|t| t.elapsed() < OPTIMISTIC_WINDOW)
+            {
+                s.volume = app.status.volume;
+                s.shuffle = app.status.shuffle;
+                s.repeat = app.status.repeat;
             }
             app.status = s;
             app.status_at = Instant::now();
@@ -180,18 +189,22 @@ fn on_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
             return vec![Effect::Send(Command::Seek(pos))];
         }
         KeyCode::Char('+') | KeyCode::Char('=') => {
+            app.optimistic_at = Some(Instant::now());
             app.status.volume = app.status.volume.saturating_add(5).min(100);
             return vec![Effect::Send(Command::SetVolume(app.status.volume))];
         }
         KeyCode::Char('-') => {
+            app.optimistic_at = Some(Instant::now());
             app.status.volume = app.status.volume.saturating_sub(5);
             return vec![Effect::Send(Command::SetVolume(app.status.volume))];
         }
         KeyCode::Char('s') => {
+            app.optimistic_at = Some(Instant::now());
             app.status.shuffle = !app.status.shuffle;
             return vec![Effect::Send(Command::SetShuffle(app.status.shuffle))];
         }
         KeyCode::Char('r') => {
+            app.optimistic_at = Some(Instant::now());
             app.status.repeat = app.status.repeat.next();
             return vec![Effect::Send(Command::SetRepeat(app.status.repeat))];
         }
@@ -618,6 +631,40 @@ mod tests {
             a.current_track().map(|t| t.name.as_str()),
             Some("Pretty Pure")
         );
+    }
+
+    #[test]
+    fn stale_status_poll_cannot_undo_optimistic_toggle() {
+        let mut a = app();
+        reduce(&mut a, key('s'));
+        assert!(a.status.shuffle);
+        // A poll that started before the toggle reached Music.app still says off.
+        reduce(
+            &mut a,
+            Action::Bridge(Event::Status(PlayerStatus {
+                shuffle: false,
+                ..PlayerStatus::default()
+            })),
+        );
+        assert!(
+            a.status.shuffle,
+            "stale poll clobbered the optimistic value"
+        );
+        // Second press therefore turns it off, as the user expects.
+        assert_eq!(
+            reduce(&mut a, key('s')),
+            vec![Effect::Send(Command::SetShuffle(false))]
+        );
+        // Once the window has passed, polls are authoritative again.
+        a.optimistic_at = Some(Instant::now() - OPTIMISTIC_WINDOW * 2);
+        reduce(
+            &mut a,
+            Action::Bridge(Event::Status(PlayerStatus {
+                shuffle: true,
+                ..PlayerStatus::default()
+            })),
+        );
+        assert!(a.status.shuffle);
     }
 
     #[test]
