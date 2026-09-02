@@ -160,14 +160,12 @@ impl Theme {
     }
 
     /// Colour at position `t` in 0..=1 along the vertical gradient (0 = bottom).
-    #[allow(dead_code)] // used by ui::visualizer (Task 11)
-    /// Falls back to the foreground colour when there is no gradient.
+        /// Falls back to the foreground colour when there is no gradient.
     pub fn gradient_at(&self, t: f32) -> Rgb {
         gradient_at(&self.gradient, self.foreground.unwrap_or(Rgb(204, 204, 204)), t)
     }
 
-    #[allow(dead_code)] // used by ui::visualizer (Task 11)
-    pub fn horizontal_gradient_at(&self, t: f32) -> Option<Rgb> {
+        pub fn horizontal_gradient_at(&self, t: f32) -> Option<Rgb> {
         if self.horizontal_gradient.is_empty() {
             None
         } else {
@@ -176,7 +174,6 @@ impl Theme {
     }
 }
 
-#[allow(dead_code)] // used by ui::visualizer (Task 11)
 pub fn gradient_at(stops: &[Rgb], fallback: Rgb, t: f32) -> Rgb {
     match stops.len() {
         0 => fallback,
@@ -189,7 +186,6 @@ pub fn gradient_at(stops: &[Rgb], fallback: Rgb, t: f32) -> Rgb {
     }
 }
 
-#[allow(dead_code)] // used by ui::visualizer (Task 11)
 pub fn lerp(a: Rgb, b: Rgb, t: f32) -> Rgb {
     let f = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
     Rgb(f(a.0, b.0), f(a.1, b.1), f(a.2, b.2))

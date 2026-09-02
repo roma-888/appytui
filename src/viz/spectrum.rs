@@ -152,6 +152,7 @@ impl Analyzer {
     }
 
     /// Index of the bar whose band contains `freq`, if any.
+    #[cfg(test)]
     pub fn band_for_freq(&self, freq: f32) -> Option<usize> {
         let bin = (freq * FFT_SIZE as f32 / self.sample_rate).round() as usize;
         self.bands.iter().position(|(lo, hi)| bin >= *lo && bin < *hi)

@@ -17,6 +17,7 @@ use config::Config;
 use config::theme::Theme;
 use music::Command;
 use music::jxa::JxaBridge;
+use viz::{Control, VizEvent};
 
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
 const TICK: Duration = Duration::from_millis(250);
@@ -61,6 +62,11 @@ fn run(args: cli::Args) -> Result<()> {
     cmd_tx.send(Command::LoadLibrary)?;
     cmd_tx.send(Command::LoadPlaylists)?;
 
+    let (viz_tx, viz_rx) = unbounded::<VizEvent>();
+    let (viz_ctl_tx, viz_ctl_rx) = unbounded::<Control>();
+    let viz_handle = if viz.enabled { Some(viz::thread::spawn(viz.clone(), None, 40, viz_ctl_rx, viz_tx)) } else { None };
+    let mut last_bars = 0usize;
+
     let (key_tx, key_rx) = unbounded::<TermEvent>();
     std::thread::Builder::new()
         .name("input".into())
@@ -87,23 +93,39 @@ fn run(args: cli::Args) -> Result<()> {
                     _ => continue,
                 },
                 recv(ev_rx) -> ev => Action::Bridge(ev?),
+                recv(viz_rx) -> ev => Action::Viz(ev?),
                 recv(ticker) -> _ => Action::Tick,
             };
+            let is_viz_frame = matches!(action, Action::Viz(VizEvent::Frame(_)));
             for effect in reduce(&mut app, action) {
                 match effect {
                     Effect::Send(cmd) => cmd_tx.send(cmd)?,
+                    Effect::Viz(c) => {
+                        let _ = viz_ctl_tx.send(c);
+                    }
                     Effect::Quit => return Ok(()),
                 }
             }
             if app.should_quit {
                 return Ok(());
             }
+            if is_viz_frame && !app.viz.enabled {
+                continue;
+            }
             terminal.draw(|f| ui::draw(f, &mut app))?;
+            if app.viz_bars_wanted != last_bars {
+                last_bars = app.viz_bars_wanted;
+                let _ = viz_ctl_tx.send(Control::SetBars(last_bars));
+            }
         }
     })();
 
     ratatui::restore();
     let _ = cmd_tx.send(Command::Shutdown);
+    let _ = viz_ctl_tx.send(Control::Shutdown);
     let _ = worker.join();
+    if let Some(h) = viz_handle {
+        let _ = h.join();
+    }
     result
 }

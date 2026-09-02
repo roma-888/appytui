@@ -8,20 +8,24 @@ use super::library::Library;
 use super::queue::PlayContext;
 use super::views::{Drill, Row, Tab};
 use super::{App, MESSAGE_TTL};
-use crate::music::model::TrackId;
+use crate::config::Orientation;
+use crate::music::model::{PlayerState, TrackId};
 use crate::music::{Command, Event};
+use crate::viz::{Control, VizEvent};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
     Key(KeyEvent),
     Tick,
     Bridge(Event),
+    Viz(VizEvent),
     Resize,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Effect {
     Send(Command),
+    Viz(Control),
     Quit,
 }
 
@@ -35,6 +39,15 @@ pub fn reduce(app: &mut App, action: Action) -> Vec<Effect> {
             Vec::new()
         }
         Action::Bridge(ev) => on_bridge(app, ev),
+        Action::Viz(VizEvent::Frame(f)) => {
+            app.viz_frame = Some(f);
+            Vec::new()
+        }
+        Action::Viz(VizEvent::Fallback(msg)) => {
+            app.viz_simulated = true;
+            app.notify(msg);
+            Vec::new()
+        }
         Action::Resize => Vec::new(),
     }
 }
@@ -46,13 +59,23 @@ fn on_bridge(app: &mut App, ev: Event) -> Vec<Effect> {
         }
         Event::Playlists(p) => app.playlists = p,
         Event::Status(s) => {
+            let mut effects = Vec::new();
+            let was_playing = app.status.state == PlayerState::Playing;
             if let Some(id) = &s.track_id {
                 app.context.resync(id);
             }
             app.status = s;
             app.status_at = Instant::now();
+            let playing = app.status.state == PlayerState::Playing;
+            if playing != was_playing {
+                effects.push(Effect::Viz(Control::Playing(playing)));
+            }
+            return effects;
         }
-        Event::MusicPid(pid) => app.music_pid = Some(pid),
+        Event::MusicPid(pid) => {
+            app.music_pid = Some(pid);
+            return vec![Effect::Viz(Control::MusicPid(pid))];
+        }
         Event::Error(e) => app.notify(e),
     }
     Vec::new()
@@ -134,6 +157,22 @@ fn on_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Char('r') => {
             app.status.repeat = app.status.repeat.next();
             return vec![Effect::Send(Command::SetRepeat(app.status.repeat))];
+        }
+        KeyCode::Char('v') => {
+            app.viz.enabled = !app.viz.enabled;
+            return vec![Effect::Viz(Control::Settings(app.viz.clone()))];
+        }
+        KeyCode::Char('V') => {
+            app.viz.orientation = match app.viz.orientation {
+                Orientation::Bottom => Orientation::Top,
+                Orientation::Top => Orientation::Horizontal,
+                Orientation::Horizontal => Orientation::Bottom,
+            };
+            return vec![Effect::Viz(Control::Settings(app.viz.clone()))];
+        }
+        KeyCode::Char('w') => {
+            app.viz.waveform = !app.viz.waveform;
+            return vec![Effect::Viz(Control::Settings(app.viz.clone()))];
         }
         _ => {}
     }
@@ -385,6 +424,50 @@ mod tests {
         a.message = Some(("old".into(), Instant::now() - MESSAGE_TTL * 2));
         reduce(&mut a, Action::Tick);
         assert!(a.message.is_none());
+    }
+
+    #[test]
+    fn viz_keys_update_settings_and_emit_control() {
+        let mut a = app();
+        let fx = reduce(&mut a, key('V'));
+        assert_eq!(a.viz.orientation, Orientation::Bottom);
+        assert_eq!(fx, vec![Effect::Viz(Control::Settings(a.viz.clone()))]);
+        reduce(&mut a, key('w'));
+        assert!(a.viz.waveform);
+        reduce(&mut a, key('v'));
+        assert!(!a.viz.enabled);
+    }
+
+    #[test]
+    fn viz_frame_and_fallback_are_stored() {
+        let mut a = app();
+        reduce(
+            &mut a,
+            Action::Viz(VizEvent::Frame(crate::viz::Frame { left: vec![0.5], right: vec![], waveform: vec![] })),
+        );
+        assert!(a.viz_frame.is_some());
+        reduce(&mut a, Action::Viz(VizEvent::Fallback("simulated".into())));
+        assert!(a.viz_simulated);
+        assert!(a.message.is_some());
+    }
+
+    #[test]
+    fn play_state_change_emits_playing_control() {
+        let mut a = app();
+        let fx = reduce(
+            &mut a,
+            Action::Bridge(Event::Status(PlayerStatus { state: PlayerState::Playing, ..PlayerStatus::default() })),
+        );
+        assert_eq!(fx, vec![Effect::Viz(Control::Playing(true))]);
+        let fx = reduce(
+            &mut a,
+            Action::Bridge(Event::Status(PlayerStatus {
+                state: PlayerState::Playing,
+                position_secs: 3.0,
+                ..PlayerStatus::default()
+            })),
+        );
+        assert!(fx.is_empty());
     }
 
     #[test]

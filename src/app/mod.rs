@@ -29,10 +29,11 @@ pub struct App {
     pub context: PlayContext,
     pub message: Option<(String, Instant)>,
     pub show_help: bool,
-    #[allow(dead_code)] // read by ui::visualizer (Task 11)
     pub viz: VizSettings,
-    #[allow(dead_code)]
     pub viz_simulated: bool,
+    pub viz_frame: Option<crate::viz::Frame>,
+    /// Bars the now-playing pane can show; set during draw, read by main.rs.
+    pub viz_bars_wanted: usize,
     pub theme: Theme,
     pub truecolor: bool,
     #[allow(dead_code)] // read by the art lookup (Task 12)
@@ -57,6 +58,8 @@ impl App {
             show_help: false,
             viz,
             viz_simulated: false,
+            viz_frame: None,
+            viz_bars_wanted: 0,
             theme,
             truecolor: crate::config::theme::terminal_supports_truecolor(),
             art_enabled,

@@ -14,7 +14,6 @@ pub struct Areas {
     pub art: Rect,
     pub info: Rect,
     pub progress: Rect,
-    #[allow(dead_code)] // drawn by Task 11
     pub viz: Rect,
     pub flags: Rect,
 }
@@ -33,14 +32,27 @@ pub fn layout(inner: Rect) -> Areas {
     Areas { art, info, progress, viz, flags }
 }
 
-pub fn draw(frame: &mut Frame, app: &App, p: &Palette, area: Rect) {
+pub fn draw(frame: &mut Frame, app: &mut App, p: &Palette, area: Rect) {
     let block =
         Block::default().borders(Borders::ALL).title(" Now Playing ").border_style(Style::default().fg(p.dim));
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let areas = layout(inner);
 
-    let Some(track) = app.current_track() else {
+    app.viz_bars_wanted = super::visualizer::bar_count(areas.viz.width, &app.viz);
+    if app.viz.enabled {
+        frame.render_widget(
+            super::visualizer::Visualizer {
+                frame: app.viz_frame.as_ref(),
+                settings: &app.viz,
+                theme: &app.theme,
+                truecolor: app.truecolor,
+            },
+            areas.viz,
+        );
+    }
+
+    let Some(track) = app.current_track().cloned() else {
         frame.render_widget(Paragraph::new("Nothing playing").style(Style::default().fg(p.dim)), areas.info);
         return;
     };

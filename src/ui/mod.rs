@@ -12,6 +12,7 @@ pub mod list;
 pub mod now_playing;
 pub mod status;
 pub mod tabs;
+pub mod visualizer;
 
 /// Theme colours converted for this terminal.
 #[derive(Debug, Clone, Copy)]
