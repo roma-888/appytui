@@ -36,7 +36,9 @@ Out of scope for v1:
 ## 3. Platform and stack
 
 - macOS 14.2 or newer (Core Audio process taps). Developed on macOS 26.4.
-- Rust 2021 edition, stable toolchain (1.96 available).
+- Rust 2024 edition, stable toolchain (1.96 available). Installed with
+  `cargo install --path .`; no code signing is needed because the automation and
+  audio-capture permissions attach to the terminal app, not the binary.
 - Crates: `ratatui` 0.30, `crossterm` 0.29, `cidre` 0.24 (`core_audio` feature
   only, `macos_14_2`), `rustfft` 6, `serde` + `serde_json`, `image` (JPEG decode),
   `ureq` (album art HTTP), `nucleo-matcher` (fuzzy filter), `crossbeam-channel`,
@@ -124,8 +126,17 @@ Model:
 
 The JXA bridge launches Music.app if it is not running. Each method is one
 script; the runner passes arguments as JSON via an environment variable, never
-by string interpolation into the script. The bridge worker polls `status()`
-once per second and only emits an event when the status changed.
+by string interpolation into the script. Every `osascript` call has a 5 second
+timeout; a timeout is reported like any other error. The bridge worker polls
+`status()` once per second, re-polls immediately after any command, and only
+emits an event when the status changed. It also reports Music.app's PID for
+the visualizer tap.
+
+`load_playlists` runs one bulk JXA script that returns every user playlist
+with its track persistent IDs, so the Playlists tab fills in one call. It
+excludes the special "Library" and "Music" entries and playlist folders; smart
+playlists are included and flagged. It runs in the background after the
+library dump so Songs is browsable first.
 
 `play_track` with a context plays `track X of playlist Y` so Music.app
 continues through that playlist natively. Without a context it plays the
@@ -135,7 +146,9 @@ library track.
 
 `App` holds: loaded library and playlists, derived album and artist indexes,
 the active tab, per-tab list cursors and drill-down state, the filter query,
-the current `PlayerStatus`, the play context (see queue), the latest visualizer
+the current `PlayerStatus` plus the instant it was received (the UI
+interpolates the position locally while playing so the progress bar moves
+smoothly between 1 Hz polls), the play context (see queue), the latest visualizer
 frame, the current cover art grid, a transient status message, and flags such
 as help-overlay open.
 
@@ -169,9 +182,15 @@ real order is unknown.
 `right: Vec<f32>`, plus `waveform: Vec<f32>` (recent samples in `-1.0..=1.0`)
 when waveform mode is on.
 
-Tap (`viz/tap.rs`): a stereo global process tap excluding no processes, wrapped
-in a private aggregate device on the default output device, exactly as in the
-cidre `core-audio-record` example. The IO proc writes interleaved L/R samples
+Tap (`viz/tap.rs`): a stereo process tap on Music.app only. The bridge reports
+Music.app's PID; `kAudioHardwarePropertyTranslatePIDToProcessObject` turns it
+into an audio process object, and `TapDesc::with_stereo_mixdown_of_processes`
+builds the tap, wrapped in a private aggregate device on the default output
+device as in the cidre `core-audio-record` example. If the process object
+cannot be resolved (Music.app not running yet, or not producing audio) the tap
+falls back to a global tap excluding no processes and retries the process tap
+on the next track change. Known limitation: when Music streams to AirPlay the
+default output device carries no audio and the visualizer shows silence. The IO proc writes interleaved L/R samples
 into a single-producer single-consumer ring buffer of 8192 frames. When the
 default output device changes the tap is torn down and rebuilt.
 
@@ -326,7 +345,9 @@ Keys:
 | `q` | quit |
 
 Colours come from the active theme (see 8a). The `terminal` theme uses only
-the terminal palette so light and dark terminals both work.
+the terminal palette so light and dark terminals both work. When `COLORTERM`
+does not advertise truecolor, hex colours in gradients and album art are
+quantised to the nearest xterm-256 entry.
 
 ## 11. Error handling
 
