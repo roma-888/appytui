@@ -3,6 +3,7 @@ mod cli;
 mod config;
 mod music;
 mod ui;
+mod viz;
 
 use std::time::Duration;
 
