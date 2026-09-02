@@ -36,8 +36,10 @@ pub struct App {
     pub viz_bars_wanted: usize,
     pub theme: Theme,
     pub truecolor: bool,
-    #[allow(dead_code)] // read by the art lookup (Task 12)
     pub art_enabled: bool,
+    /// Decoded cover for the current album, keyed by `art::cache_key`.
+    pub art: Option<(String, image::RgbImage)>,
+    pub art_key: Option<String>,
     pub music_pid: Option<u32>,
     pub should_quit: bool,
     filter: Filter,
@@ -63,6 +65,8 @@ impl App {
             theme,
             truecolor: crate::config::theme::terminal_supports_truecolor(),
             art_enabled,
+            art: None,
+            art_key: None,
             music_pid: None,
             should_quit: false,
             filter: Filter::new(),

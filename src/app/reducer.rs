@@ -8,6 +8,7 @@ use super::library::Library;
 use super::queue::PlayContext;
 use super::views::{Drill, Row, Tab};
 use super::{App, MESSAGE_TTL};
+use crate::art::{ArtRequest, ArtResult};
 use crate::config::Orientation;
 use crate::music::model::{PlayerState, TrackId};
 use crate::music::{Command, Event};
@@ -19,6 +20,7 @@ pub enum Action {
     Tick,
     Bridge(Event),
     Viz(VizEvent),
+    Art(ArtResult),
     Resize,
 }
 
@@ -26,6 +28,7 @@ pub enum Action {
 pub enum Effect {
     Send(Command),
     Viz(Control),
+    LookupArt(ArtRequest),
     Quit,
 }
 
@@ -46,6 +49,12 @@ pub fn reduce(app: &mut App, action: Action) -> Vec<Effect> {
         Action::Viz(VizEvent::Fallback(msg)) => {
             app.viz_simulated = true;
             app.notify(msg);
+            Vec::new()
+        }
+        Action::Art(res) => {
+            if app.art_key.as_deref() == Some(res.key.as_str()) {
+                app.art = res.image.map(|img| (res.key, img));
+            }
             Vec::new()
         }
         Action::Resize => Vec::new(),
@@ -69,6 +78,21 @@ fn on_bridge(app: &mut App, ev: Event) -> Vec<Effect> {
             let playing = app.status.state == PlayerState::Playing;
             if playing != was_playing {
                 effects.push(Effect::Viz(Control::Playing(playing)));
+            }
+            match app.current_track().cloned() {
+                Some(track) if app.art_enabled => {
+                    let key = crate::art::cache_key(&track.artist, &track.album);
+                    if app.art_key.as_deref() != Some(key.as_str()) {
+                        app.art_key = Some(key.clone());
+                        app.art = None;
+                        effects.push(Effect::LookupArt(ArtRequest { key, artist: track.artist, name: track.name }));
+                    }
+                }
+                Some(_) => {}
+                None => {
+                    app.art = None;
+                    app.art_key = None;
+                }
             }
             return effects;
         }
@@ -468,6 +492,27 @@ mod tests {
             })),
         );
         assert!(fx.is_empty());
+    }
+
+    #[test]
+    fn track_change_requests_art_once_and_result_is_kept_if_current() {
+        let mut a = app();
+        a.art_enabled = true;
+        let status =
+            PlayerStatus { state: PlayerState::Playing, track_id: Some(TrackId("1".into())), ..PlayerStatus::default() };
+        let fx = reduce(&mut a, Action::Bridge(Event::Status(status.clone())));
+        let key = crate::art::cache_key("Ann", "Album A");
+        assert!(fx.contains(&Effect::LookupArt(ArtRequest {
+            key: key.clone(),
+            artist: "Ann".into(),
+            name: "Alpha".into()
+        })));
+        let fx = reduce(&mut a, Action::Bridge(Event::Status(PlayerStatus { position_secs: 5.0, ..status })));
+        assert!(!fx.iter().any(|e| matches!(e, Effect::LookupArt(_))));
+        reduce(&mut a, Action::Art(ArtResult { key: key.clone(), image: Some(image::RgbImage::new(1, 1)) }));
+        assert!(a.art.is_some());
+        reduce(&mut a, Action::Art(ArtResult { key: "stale".into(), image: Some(image::RgbImage::new(1, 1)) }));
+        assert_eq!(a.art.as_ref().map(|(k, _)| k.as_str()), Some(key.as_str()));
     }
 
     #[test]

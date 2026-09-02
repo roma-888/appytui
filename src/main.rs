@@ -1,4 +1,5 @@
 mod app;
+mod art;
 mod cli;
 mod config;
 mod music;
@@ -12,6 +13,7 @@ use crossbeam_channel::{select, unbounded};
 use ratatui::crossterm::event::{self, Event as TermEvent};
 
 use app::App;
+use art::{ArtRequest, ArtResult};
 use app::reducer::{Action, Effect, reduce};
 use config::Config;
 use config::theme::Theme;
@@ -67,6 +69,10 @@ fn run(args: cli::Args) -> Result<()> {
     let viz_handle = if viz.enabled { Some(viz::thread::spawn(viz.clone(), None, 40, viz_ctl_rx, viz_tx)) } else { None };
     let mut last_bars = 0usize;
 
+    let (art_req_tx, art_req_rx) = unbounded::<ArtRequest>();
+    let (art_res_tx, art_res_rx) = unbounded::<ArtResult>();
+    let art_handle = if art_enabled { Some(art::spawn(art::cache_dir(), art_req_rx, art_res_tx)) } else { None };
+
     let (key_tx, key_rx) = unbounded::<TermEvent>();
     std::thread::Builder::new()
         .name("input".into())
@@ -94,6 +100,7 @@ fn run(args: cli::Args) -> Result<()> {
                 },
                 recv(ev_rx) -> ev => Action::Bridge(ev?),
                 recv(viz_rx) -> ev => Action::Viz(ev?),
+                recv(art_res_rx) -> r => Action::Art(r?),
                 recv(ticker) -> _ => Action::Tick,
             };
             let is_viz_frame = matches!(action, Action::Viz(VizEvent::Frame(_)));
@@ -102,6 +109,9 @@ fn run(args: cli::Args) -> Result<()> {
                     Effect::Send(cmd) => cmd_tx.send(cmd)?,
                     Effect::Viz(c) => {
                         let _ = viz_ctl_tx.send(c);
+                    }
+                    Effect::LookupArt(req) => {
+                        let _ = art_req_tx.send(req);
                     }
                     Effect::Quit => return Ok(()),
                 }
@@ -125,6 +135,10 @@ fn run(args: cli::Args) -> Result<()> {
     let _ = viz_ctl_tx.send(Control::Shutdown);
     let _ = worker.join();
     if let Some(h) = viz_handle {
+        let _ = h.join();
+    }
+    drop(art_req_tx);
+    if let Some(h) = art_handle {
         let _ = h.join();
     }
     result

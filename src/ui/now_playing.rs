@@ -6,11 +6,11 @@ use ratatui::widgets::{Block, Borders, LineGauge, Paragraph};
 
 use super::Palette;
 use crate::app::App;
+use crate::config::theme::to_color;
 use crate::music::model::{PlayerState, fmt_duration};
 
 /// Sub-areas of the now-playing pane that later tasks draw into.
 pub struct Areas {
-    #[allow(dead_code)] // drawn by Task 12
     pub art: Rect,
     pub info: Rect,
     pub progress: Rect,
@@ -50,6 +50,22 @@ pub fn draw(frame: &mut Frame, app: &mut App, p: &Palette, area: Rect) {
             },
             areas.viz,
         );
+    }
+
+    if let Some((_, img)) = &app.art
+        && areas.art.height > 0
+    {
+        let cells = crate::art::render::to_cells(img, areas.art.width.min(areas.art.height * 2), areas.art.height);
+        let cols = cells.first().map(|r| r.len() as u16).unwrap_or(0);
+        let x0 = areas.art.x + (areas.art.width - cols) / 2;
+        for (dy, row) in cells.iter().enumerate() {
+            for (dx, (top, bottom)) in row.iter().enumerate() {
+                let cell = &mut frame.buffer_mut()[(x0 + dx as u16, areas.art.y + dy as u16)];
+                cell.set_symbol("▄");
+                cell.set_fg(to_color(*bottom, app.truecolor));
+                cell.set_bg(to_color(*top, app.truecolor));
+            }
+        }
     }
 
     let Some(track) = app.current_track().cloned() else {
