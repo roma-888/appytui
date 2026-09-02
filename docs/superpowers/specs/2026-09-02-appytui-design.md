@@ -21,6 +21,9 @@ In scope for v1:
 - Now Playing panel: album art, track metadata, progress, and the visualizer.
 - Real audio spectrum visualizer driven by a Core Audio process tap and an FFT.
 - Simulated visualizer fallback when audio capture is unavailable.
+- cava-compatible visualizer settings (orientation, stereo/mono, bar geometry,
+  monstercat/waves smoothing, gradients, waveform) and cava-compatible theme
+  files, configured in a TOML config file.
 
 Out of scope for v1:
 
@@ -37,7 +40,7 @@ Out of scope for v1:
 - Crates: `ratatui` 0.30, `crossterm` 0.29, `cidre` 0.24 (`core_audio` feature
   only, `macos_14_2`), `rustfft` 6, `serde` + `serde_json`, `image` (JPEG decode),
   `ureq` (album art HTTP), `nucleo-matcher` (fuzzy filter), `crossbeam-channel`,
-  `anyhow`, `thiserror`.
+  `toml` + `serde` for config, `dirs` for config and cache paths, `anyhow`, `thiserror`.
 - Music.app is driven with JavaScript for Automation (JXA) through `osascript`.
   Every call returns JSON on stdout.
 
@@ -72,7 +75,11 @@ src/
     render.rs    image -> half-block cell grid (pure, tested)
   ui/
     mod.rs       layout + draw(frame, &App)
+    visualizer.rs Frame + VizSettings -> cells (pure, tested)
     tabs.rs, list.rs, now_playing.rs, status.rs, help.rs
+  config/
+    mod.rs       Config struct, load/create ~/.config/appytui/config.toml
+    theme.rs     Theme struct, cava INI parser, built-in themes, lookup order
 ```
 
 Threads:
@@ -158,32 +165,113 @@ real order is unknown.
 
 ## 8. Visualizer
 
-`viz::Frame` is `Vec<f32>` of bar heights in `0.0..=1.0`, one per bar.
+`viz::Frame` carries per-channel bar heights in `0.0..=1.0`: `left: Vec<f32>`,
+`right: Vec<f32>`, plus `waveform: Vec<f32>` (recent samples in `-1.0..=1.0`)
+when waveform mode is on.
 
 Tap (`viz/tap.rs`): a stereo global process tap excluding no processes, wrapped
 in a private aggregate device on the default output device, exactly as in the
-cidre `core-audio-record` example. The IO proc mixes L and R to mono and writes
-into a single-producer single-consumer ring buffer of 8192 samples. When the
+cidre `core-audio-record` example. The IO proc writes interleaved L/R samples
+into a single-producer single-consumer ring buffer of 8192 frames. When the
 default output device changes the tap is torn down and rebuilt.
 
-Spectrum (`viz/spectrum.rs`), pure and tested:
+Spectrum (`viz/spectrum.rs`), pure and tested, per channel:
 
 1. Take the newest 2048 samples, apply a Hann window, run a real FFT.
-2. Compute magnitudes for bins 40 Hz to 12 kHz.
-3. Map to N bars on a log-frequency scale (N follows the pane width, 2 cells
-   per bar), averaging the bins that fall in each band.
+2. Compute magnitudes for bins between `lower_cutoff_freq` and
+   `higher_cutoff_freq` (defaults 50 Hz and 5 kHz, as in the user's cava
+   config).
+3. Map to N bars on a log-frequency scale, averaging the bins in each band.
+   N is derived from the pane width, `bar_width`, and `bar_spacing`.
 4. Convert to dB, clamp to a 60 dB range, normalize to 0..1.
-5. Apply cava-style smoothing: instant attack, gravity-based fall of about
-   0.05 per frame at 30 fps, and a slow auto-gain that tracks the recent peak so
-   quiet and loud tracks both fill the pane.
+5. Smoothing, matching cava: integral filter and gravity fall governed by
+   `noise_reduction` (0..100, default 77), optional `monstercat` neighbour
+   spreading, optional `waves` (wider, stronger spreading), and `autosens`
+   auto-gain tracking the recent peak.
+
+Mono mode averages the channels (or takes `left`/`right` per `mono_option`)
+before analysis. Stereo mode analyses both and the renderer mirrors them with
+the lowest bands meeting in the centre.
+
+Rendering (`ui/visualizer.rs`), all pure functions over a `Frame` and a
+`VizSettings`:
+
+- `orientation = bottom | top | horizontal`. `horizontal` grows bars up and
+  down from a centre line; with `horizontal_stereo = true` the left channel is
+  drawn above the line and the right below.
+- `channels = stereo | mono`, `reverse`.
+- `bar_width` (default 2) and `bar_spacing` (default 1) in cells. Partial cells
+  use `▁▂▃▄▅▆▇█` (and `▔`-style top eighths for `top` orientation).
+- `gradient`: up to 8 colour stops blended vertically per cell row.
+  `horizontal_gradient` gives one colour per bar across the width;
+  `blend_direction` mixes the two as in cava. No gradient means the theme's
+  foreground colour.
+- `waveform = true` draws the oscilloscope-style waveform instead of bars.
+- `show_idle_bar_heads` draws a flat line of bar tops while silent.
+
+The `v` key toggles the visualizer, `V` cycles orientation, `w` toggles
+waveform. Changes made with keys are not persisted; the config file is the
+source of truth.
 
 Fallback (`viz/simulated.rs`): the sine-plus-noise animation from
-AppleMusicTUI, used when tap creation fails. The status bar shows a one-line
-hint: "Visualizer simulated. Allow system audio recording in System Settings >
+AppleMusicTUI, rendered through the same renderer so it honours the same
+settings, used when tap creation fails. The status bar shows a one-line hint:
+"Visualizer simulated. Allow system audio recording in System Settings >
 Privacy & Security > Screen & System Audio Recording, then restart."
 
-Rendering: bars use `▁▂▃▄▅▆▇█` and a vertical colour gradient. The `v` key
-cycles visualizer on and off. `--no-viz` skips the tap entirely.
+`--no-viz` skips the tap entirely.
+
+## 8a. Configuration and themes
+
+Config file: `~/.config/appytui/config.toml`, created with commented defaults
+on first run. Sections:
+
+```toml
+[visualizer]
+enabled = true
+orientation = "horizontal"      # bottom | top | horizontal
+channels = "stereo"             # stereo | mono
+mono_option = "average"         # left | right | average
+reverse = false
+horizontal_stereo = false
+bar_width = 2
+bar_spacing = 1
+lower_cutoff_freq = 50
+higher_cutoff_freq = 5000
+framerate = 30
+autosens = true
+sensitivity = 100
+noise_reduction = 77
+monstercat = true
+waves = true
+waveform = false
+show_idle_bar_heads = true
+
+[theme]
+name = "catppuccin-mocha"       # built-in name, or a file under the theme dirs
+
+[art]
+enabled = true
+```
+
+Themes:
+
+- A theme provides the visualizer gradient (1 to 8 stops), an optional
+  horizontal gradient, `blend_direction`, background and foreground, and UI
+  accent colours (selection, tab highlight, progress bar, dim text).
+- Theme files use cava's INI format so existing cava themes load unchanged.
+  Lookup order for `theme.name`: `~/.config/appytui/themes/<name>`,
+  `~/.config/cava/themes/<name>`, then the built-in set. A cava theme has no UI
+  accents, so those are derived from its gradient: accent = first stop,
+  highlight = middle stop, dim = terminal default.
+- Built-in themes: `catppuccin-mocha`, `catppuccin-mocha-h`, `solarized-dark`,
+  `tricolor`, and `terminal` (no gradient, terminal palette only). Built-in
+  themes define UI accents explicitly.
+- `--theme <name>` overrides the config for one run.
+
+The defaults above reproduce the user's current cava setup: horizontal
+orientation, stereo channels, monstercat and waves smoothing, 5 kHz cutoff,
+catppuccin-mocha gradient.
 
 ## 9. Album art
 
@@ -232,10 +320,13 @@ Keys:
 | `s` / `r` | toggle shuffle / cycle repeat |
 | `/` | filter current list; `Esc` clears |
 | `v` | toggle visualizer |
+| `V` | cycle visualizer orientation |
+| `w` | toggle waveform mode |
 | `?` | help overlay |
 | `q` | quit |
 
-Colours use the terminal palette so light and dark themes both work.
+Colours come from the active theme (see 8a). The `terminal` theme uses only
+the terminal palette so light and dark terminals both work.
 
 ## 11. Error handling
 
@@ -256,6 +347,10 @@ Colours use the terminal palette so light and dark themes both work.
 - `viz::spectrum`: a synthesized 440 Hz sine lights the expected band; silence
   yields all zeros; smoothing falls monotonically.
 - `art::render`: a 2x2 test image maps to the expected cells and colours.
+- `ui::visualizer`: golden tests for each orientation, stereo mirroring, bar
+  width/spacing, and gradient colour per row.
+- `config::theme`: the four shipped cava theme files parse to the expected
+  stops; lookup order prefers user dirs over built-ins.
 - `#[ignore]` integration test for the real bridge and the real tap, run
   manually on a Mac with Music.app.
 
