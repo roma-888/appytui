@@ -4,7 +4,8 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, LineGauge, Paragraph};
 
-use ratatui_image::StatefulImage;
+use ratatui::layout::Size;
+use ratatui_image::{Resize, StatefulImage};
 
 use super::Palette;
 use crate::app::App;
@@ -64,7 +65,23 @@ pub fn draw(frame: &mut Frame, app: &mut App, p: &Palette, area: Rect) {
     if let Some((_, protocol)) = app.art.as_mut()
         && areas.art.height > 0
     {
-        frame.render_stateful_widget(StatefulImage::default(), areas.art, protocol);
+        // Centre the cover: ask the protocol how many cells the fitted image takes.
+        let fit = protocol.size_for(
+            Resize::Fit(None),
+            Size {
+                width: areas.art.width,
+                height: areas.art.height,
+            },
+        );
+        let w = fit.width.clamp(1, areas.art.width);
+        let h = fit.height.clamp(1, areas.art.height);
+        let slot = Rect::new(
+            areas.art.x + (areas.art.width - w) / 2,
+            areas.art.y + (areas.art.height - h) / 2,
+            w,
+            h,
+        );
+        frame.render_stateful_widget(StatefulImage::default(), slot, protocol);
     }
 
     let Some(track) = app.current_track().cloned() else {
@@ -86,12 +103,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, p: &Palette, area: Rect) {
             Style::default()
                 .fg(p.highlight)
                 .add_modifier(Modifier::BOLD),
-        )),
-        Line::from(track.artist.clone()),
+        ))
+        .centered(),
+        Line::from(track.artist.clone()).centered(),
         Line::from(Span::styled(
             track.album.clone(),
             Style::default().fg(p.dim),
-        )),
+        ))
+        .centered(),
     ];
     frame.render_widget(Paragraph::new(info), areas.info);
 

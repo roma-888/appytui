@@ -128,6 +128,17 @@ mod tests {
         let text = render(&mut app);
         assert!(text.contains("Alpha Song"));
         assert!(text.contains("Ann"));
+        // Title is centred in the right-hand pane, not flush against its left border.
+        // The list on the left also shows the title; take the rightmost occurrence.
+        let col = text
+            .lines()
+            .filter_map(|l| l.rfind("Alpha Song"))
+            .max()
+            .unwrap();
+        assert!(
+            col > 65,
+            "title at column {col}, expected centred in the right pane"
+        );
         assert!(text.contains("shuffle on"));
         assert!(text.contains("repeat all"));
         assert!(text.contains("vol 80"));
