@@ -96,7 +96,8 @@ fn handle(bridge: &mut dyn MusicBridge, events: &Sender<Event>, cmd: Command) {
         Command::LoadPlaylists => bridge.load_playlists().map(|p| {
             let _ = events.send(Event::Playlists(p));
         }),
-        Command::PlayTrack { track, context } => bridge.play_track(&track, context.as_ref()),
+        Command::PlayTrack(track) => bridge.play_track(&track),
+        Command::PlayTracks(tracks) => bridge.play_tracks(&tracks),
         Command::PlayPause => bridge.play_pause(),
         Command::Next => bridge.next(),
         Command::Previous => bridge.previous(),
@@ -139,10 +140,7 @@ mod tests {
         );
 
         cmd_tx
-            .send(Command::PlayTrack {
-                track: TrackId("A".into()),
-                context: None,
-            })
+            .send(Command::PlayTrack(TrackId("A".into())))
             .unwrap();
         let ev = ev_rx.recv_timeout(Duration::from_secs(1)).unwrap();
         assert!(matches!(ev, Event::Status(s) if s.state == PlayerState::Playing));

@@ -3,7 +3,7 @@
 use anyhow::Result;
 
 use super::MusicBridge;
-use super::model::{PlayerState, PlayerStatus, Playlist, PlaylistId, RepeatMode, Track, TrackId};
+use super::model::{PlayerState, PlayerStatus, Playlist, RepeatMode, Track, TrackId};
 
 #[derive(Debug, Default)]
 pub struct FakeBridge {
@@ -39,6 +39,14 @@ pub fn track(id: &str, name: &str, artist: &str, album: &str) -> Track {
     }
 }
 
+impl FakeBridge {
+    fn start(&mut self, track: &TrackId) {
+        self.status.state = PlayerState::Playing;
+        self.status.track_id = Some(track.clone());
+        self.status.position_secs = 0.0;
+    }
+}
+
 impl MusicBridge for FakeBridge {
     fn ensure_running(&mut self) -> Result<()> {
         self.calls.push("ensure_running".into());
@@ -60,15 +68,17 @@ impl MusicBridge for FakeBridge {
     fn music_pid(&mut self) -> Result<u32> {
         Ok(4242)
     }
-    fn play_track(&mut self, track: &TrackId, context: Option<&PlaylistId>) -> Result<()> {
-        self.calls.push(format!(
-            "play_track {} {:?}",
-            track.0,
-            context.map(|c| c.0.clone())
-        ));
-        self.status.state = PlayerState::Playing;
-        self.status.track_id = Some(track.clone());
-        self.status.position_secs = 0.0;
+    fn play_track(&mut self, track: &TrackId) -> Result<()> {
+        self.calls.push(format!("play_track {}", track.0));
+        self.start(track);
+        Ok(())
+    }
+    fn play_tracks(&mut self, tracks: &[TrackId]) -> Result<()> {
+        let ids: Vec<&str> = tracks.iter().map(|t| t.0.as_str()).collect();
+        self.calls.push(format!("play_tracks [{}]", ids.join(",")));
+        if let Some(first) = tracks.first() {
+            self.start(first);
+        }
         Ok(())
     }
     fn play_pause(&mut self) -> Result<()> {
@@ -116,9 +126,15 @@ mod tests {
     #[test]
     fn fake_records_calls_and_updates_status() {
         let mut b = FakeBridge::with_tracks(vec![track("A", "Song", "Artist", "Album")]);
-        b.play_track(&TrackId("A".into()), None).unwrap();
+        b.play_track(&TrackId("A".into())).unwrap();
+        b.play_tracks(&[TrackId("B".into()), TrackId("A".into())])
+            .unwrap();
+        assert_eq!(b.status().unwrap().track_id, Some(TrackId("B".into())));
         b.play_pause().unwrap();
-        assert_eq!(b.calls, vec!["play_track A None", "play_pause"]);
+        assert_eq!(
+            b.calls,
+            vec!["play_track A", "play_tracks [B,A]", "play_pause"]
+        );
         assert_eq!(b.status().unwrap().state, PlayerState::Paused);
     }
 }

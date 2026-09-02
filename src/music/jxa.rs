@@ -10,7 +10,7 @@ use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 
 use super::MusicBridge;
-use super::model::{PlayerStatus, Playlist, PlaylistId, RepeatMode, Track, TrackId};
+use super::model::{PlayerStatus, Playlist, RepeatMode, Track, TrackId};
 
 pub const TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -37,6 +37,7 @@ for (const p of Music.userPlaylists()) {
   let cls = ""; try { cls = p.class(); } catch (e) {}
   if (cls === "folderPlaylist") continue;
   if (p.specialKind() !== "none") continue;
+  if (p.name() === ARGS.skip) continue;
   out.push({ id: p.persistentID(), name: p.name(), smart: p.smart(), track_ids: p.tracks.persistentID() });
 }
 JSON.stringify(out);
@@ -60,14 +61,30 @@ JSON.stringify({ state: st, track_id, track, position_secs: Music.playerPosition
 "#;
 
 const PLAY_TRACK: &str = r#"
-let t;
-if (ARGS.playlist) {
-  const pl = Music.playlists.whose({ persistentID: ARGS.playlist })[0];
-  t = pl.tracks.whose({ persistentID: ARGS.track })[0];
-} else {
-  t = lib.tracks.whose({ persistentID: ARGS.track })[0];
+lib.tracks.whose({ persistentID: ARGS.track })[0].play();
+"ok";
+"#;
+
+/// Name of the playlist appytui owns for album, artist and playlist playback.
+/// It is hidden from the Playlists tab.
+pub const OWN_PLAYLIST: &str = "appytui";
+
+// Playing a track object gives Music.app a one-track context followed by
+// Autoplay, even for a track of a user playlist. Playing a playlist object is
+// the only way to make it continue (and shuffle) within a list, and a playlist
+// always starts from its first track, so the caller puts the chosen track first.
+// `Music.delete(pl.tracks)` empties the playlist without touching the library.
+const PLAY_TRACKS: &str = r#"
+let pl = Music.userPlaylists.whose({ name: ARGS.name })[0];
+if (!pl.exists()) {
+  pl = Music.make({ new: "playlist", withProperties: { name: ARGS.name } });
 }
-t.play();
+Music.delete(pl.tracks);
+for (const id of ARGS.tracks) {
+  const t = lib.tracks.whose({ persistentID: id })[0];
+  if (t.exists()) { Music.duplicate(t, { to: pl }); }
+}
+pl.play();
 "ok";
 "#;
 
@@ -171,7 +188,11 @@ impl MusicBridge for JxaBridge {
     }
     fn load_playlists(&mut self) -> Result<Vec<Playlist>> {
         // Bulk dump of every playlist takes a few seconds on large libraries.
-        parse_playlists(&run_script(PLAYLISTS, &json!({}), Duration::from_secs(60))?)
+        parse_playlists(&run_script(
+            PLAYLISTS,
+            &json!({ "skip": OWN_PLAYLIST }),
+            Duration::from_secs(60),
+        )?)
     }
     fn status(&mut self) -> Result<PlayerStatus> {
         parse_status(&self.run(STATUS, json!({}))?)
@@ -187,9 +208,16 @@ impl MusicBridge for JxaBridge {
             .and_then(|l| l.trim().parse().ok())
             .context("Music.app is not running")
     }
-    fn play_track(&mut self, track: &TrackId, context: Option<&PlaylistId>) -> Result<()> {
-        let args = json!({ "track": track.0, "playlist": context.map(|c| c.0.clone()) });
-        self.run(PLAY_TRACK, args).map(|_| ())
+    fn play_track(&mut self, track: &TrackId) -> Result<()> {
+        self.run(PLAY_TRACK, json!({ "track": track.0 }))
+            .map(|_| ())
+    }
+    fn play_tracks(&mut self, tracks: &[TrackId]) -> Result<()> {
+        let ids: Vec<&str> = tracks.iter().map(|t| t.0.as_str()).collect();
+        let args = json!({ "name": OWN_PLAYLIST, "tracks": ids });
+        // Each track copied into the playlist is a round trip inside Music.app
+        // (about 17 ms), so a long artist list takes a few seconds.
+        run_script(PLAY_TRACKS, &args, Duration::from_secs(60)).map(|_| ())
     }
     fn play_pause(&mut self) -> Result<()> {
         self.run(PLAY_PAUSE, json!({})).map(|_| ())
@@ -230,6 +258,31 @@ mod tests {
         let pls =
             parse_playlists(r#"[{"id":"P","name":"p","smart":false,"track_ids":[]}]"#).unwrap();
         assert_eq!(pls[0].name, "p");
+    }
+
+    /// Plays two library tracks through the appytui playlist and checks that
+    /// Music.app continues with the second one. Mutes while it runs.
+    #[test]
+    #[ignore = "drives the real Music.app"]
+    fn live_play_tracks_continues_within_the_list() {
+        let mut b = JxaBridge::new();
+        b.ensure_running().unwrap();
+        let lib = b.load_library().unwrap();
+        let ids: Vec<TrackId> = lib.iter().skip(300).take(2).map(|t| t.id.clone()).collect();
+        let volume = b.status().unwrap().volume;
+        b.set_volume(0).unwrap();
+        b.play_tracks(&ids).unwrap();
+        std::thread::sleep(Duration::from_millis(1500));
+        let first = b.status().unwrap().track_id;
+        b.next().unwrap();
+        std::thread::sleep(Duration::from_millis(1500));
+        let second = b.status().unwrap().track_id;
+        b.play_pause().unwrap();
+        b.set_volume(volume).unwrap();
+        assert_eq!(first.as_ref(), Some(&ids[0]));
+        assert_eq!(second.as_ref(), Some(&ids[1]));
+        let playlists = b.load_playlists().unwrap();
+        assert!(playlists.iter().all(|p| p.name != OWN_PLAYLIST));
     }
 
     #[test]

@@ -32,6 +32,19 @@ impl Track {
     }
 }
 
+/// How the current play context was started. Music.app continues playback
+/// within the source, so it decides what "next" and shuffle mean.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PlaySource {
+    /// A single library track, as from the Songs list; Music.app follows it
+    /// with Autoplay.
+    #[default]
+    Library,
+    /// A list (album, artist or playlist) copied into appytui's own playlist,
+    /// so Music.app keeps playing within it.
+    OwnPlaylist,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Playlist {
     pub id: PlaylistId,

@@ -104,7 +104,8 @@ pub trait MusicBridge: Send {
     fn load_library(&mut self) -> Result<Vec<Track>>;
     fn load_playlists(&mut self) -> Result<Vec<Playlist>>;
     fn status(&mut self) -> Result<PlayerStatus>;
-    fn play_track(&mut self, track: &TrackId, context: Option<&PlaylistId>) -> Result<()>;
+    fn play_track(&mut self, track: &TrackId) -> Result<()>;
+    fn play_tracks(&mut self, tracks: &[TrackId]) -> Result<()>;
     fn play_pause(&mut self) -> Result<()>;
     fn next(&mut self) -> Result<()>;
     fn previous(&mut self) -> Result<()>;
@@ -138,9 +139,16 @@ excludes the special "Library" and "Music" entries and playlist folders; smart
 playlists are included and flagged. It runs in the background after the
 library dump so Songs is browsable first.
 
-`play_track` with a context plays `track X of playlist Y` so Music.app
-continues through that playlist natively. Without a context it plays the
-library track.
+`play_track` plays one library track. In Music.app 1.6 playing a track object
+gives it a one-track context followed by Autoplay, even for a track of a user
+playlist, so that is what follows a track started from the Songs tab. The only
+way to make Music.app continue (and shuffle) within a list is to play a
+playlist object, and a playlist always starts from its first track.
+`play_tracks` therefore finds or creates a user playlist named `appytui`,
+empties it with `delete pl.tracks` (which does not touch the library), copies
+the given tracks into it in order with `duplicate`, and plays the playlist.
+Copying costs about 17 ms per track. The `appytui` playlist is skipped by
+`load_playlists`.
 
 ## 6. App state and reducer
 
@@ -169,9 +177,16 @@ list. The filter is per tab and cleared with `Esc`.
 
 Music.app's AppleScript interface does not expose Up Next. The app keeps its
 own play context: the ordered list of track IDs the user played from plus the
-index of the current track. Playing a track from any list sets the context to
-that list. On each status event the index is re-synced by locating the reported
-track ID in the context (nearest occurrence after the old index, else first).
+index of the current track, and a `PlaySource` saying how it was started.
+Playing a track from an album, artist or playlist rotates that list so the
+chosen track comes first, sends it through `play_tracks` (source
+`OwnPlaylist`), and Music.app then plays the rest of the list and wraps to the
+tracks before the chosen one. Playing from the Songs or Search tab sends
+`play_track` (source `Library`) and the context is the full list. Enter on a
+Queue row restarts an `OwnPlaylist` context rotated to that row, or plays the
+single track for a `Library` context. On each status event the index is
+re-synced by locating the reported track ID in the context (nearest occurrence
+after the old index, else first).
 The Queue tab shows the context from the current index onward. When shuffle is
 on the queue shows the context unordered with a "shuffle on" note, since the
 real order is unknown.
