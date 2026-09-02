@@ -10,8 +10,11 @@ use crate::config::theme::Theme;
 use crate::music::model::{PlayerState, PlayerStatus, Playlist, Track};
 
 pub mod library;
+pub mod playback;
 pub mod queue;
 pub mod reducer;
+#[cfg(test)]
+pub mod testing;
 pub mod views;
 
 use library::Library;
