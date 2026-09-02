@@ -3,7 +3,9 @@
 use anyhow::Result;
 
 pub mod fake;
+pub mod jxa;
 pub mod model;
+pub mod worker;
 
 use model::{PlayerStatus, Playlist, PlaylistId, RepeatMode, Track, TrackId};
 
