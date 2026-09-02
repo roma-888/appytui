@@ -88,21 +88,9 @@ fn run(args: cli::Args) -> Result<()> {
         None
     };
 
-    let (key_tx, key_rx) = unbounded::<TermEvent>();
-    std::thread::Builder::new()
-        .name("input".into())
-        .spawn(move || {
-            while let Ok(ev) = event::read() {
-                if key_tx.send(ev).is_err() {
-                    break;
-                }
-            }
-        })
-        .context("spawning input thread")?;
-    let ticker = crossbeam_channel::tick(TICK);
-
-    let mut app = App::new(theme, viz, art_enabled);
-    if art_enabled {
+    // Query the terminal for graphics support BEFORE the input thread exists:
+    // the query reads replies from stdin, and the input thread would swallow them.
+    let picker = if art_enabled {
         // Must run before the alternate screen: it exchanges escape sequences with the terminal.
         let env: Vec<(String, String)> = std::env::vars().collect();
         let query = art::should_query_terminal(env.iter().map(|(k, v)| (k.as_str(), v.as_str())));
@@ -125,13 +113,26 @@ fn run(args: cli::Args) -> Result<()> {
         if let Some(p) = forced {
             picker.set_protocol_type(p);
         }
-        let fs = picker.font_size();
-        app.notify(format!(
-            "album art: {:?} ({}x{} px cells)",
-            picker.protocol_type(),
-            fs.width,
-            fs.height
-        ));
+        Some(picker)
+    } else {
+        None
+    };
+
+    let (key_tx, key_rx) = unbounded::<TermEvent>();
+    std::thread::Builder::new()
+        .name("input".into())
+        .spawn(move || {
+            while let Ok(ev) = event::read() {
+                if key_tx.send(ev).is_err() {
+                    break;
+                }
+            }
+        })
+        .context("spawning input thread")?;
+    let ticker = crossbeam_channel::tick(TICK);
+
+    let mut app = App::new(theme, viz, art_enabled);
+    if let Some(picker) = picker {
         app.picker = picker;
     }
     let mut terminal = ratatui::init();
