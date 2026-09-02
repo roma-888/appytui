@@ -4,12 +4,13 @@ use std::path::PathBuf;
 
 pub const USAGE: &str = "appytui — Apple Music TUI
 
-USAGE: appytui [--config PATH] [--theme NAME] [--no-viz] [--no-art] [--help]
+USAGE: appytui [--config PATH] [--theme NAME] [--no-viz] [--no-art] [--version] [--help]
 
   --config PATH   config file (default ~/.config/appytui/config.toml)
   --theme NAME    override [theme].name for this run
   --no-viz        do not capture audio or draw the visualizer
   --no-art        do not fetch album art
+  --version       print the version and exit
 ";
 
 #[derive(Debug, Default, PartialEq)]
@@ -19,6 +20,7 @@ pub struct Args {
     pub no_viz: bool,
     pub no_art: bool,
     pub help: bool,
+    pub version: bool,
 }
 
 pub fn parse(mut args: impl Iterator<Item = String>) -> Result<Args, String> {
@@ -32,6 +34,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<Args, String> {
             "--no-viz" => out.no_viz = true,
             "--no-art" => out.no_art = true,
             "--help" | "-h" => out.help = true,
+            "--version" | "-V" => out.version = true,
             other => return Err(format!("unknown argument {other:?}\n\n{USAGE}")),
         }
     }
@@ -51,6 +54,7 @@ mod tests {
         let a = p(&["--theme", "tricolor", "--no-viz"]).unwrap();
         assert_eq!(a.theme.as_deref(), Some("tricolor"));
         assert!(a.no_viz && !a.no_art);
+        assert!(p(&["--version"]).unwrap().version);
         assert!(p(&["--bogus"]).is_err());
         assert!(p(&["--theme"]).is_err());
     }

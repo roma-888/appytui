@@ -37,6 +37,10 @@ fn main() {
         print!("{}", cli::USAGE);
         return;
     }
+    if args.version {
+        println!("appytui {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
     if let Err(e) = run(args) {
         eprintln!("appytui: {e:#}");
         std::process::exit(1);

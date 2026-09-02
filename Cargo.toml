@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2024"
 description = "Apple Music TUI with a cava-style visualizer"
 license = "MIT"
+repository = "https://github.com/roma-888/appytui"
+readme = "README.md"
+keywords = ["apple-music", "tui", "visualizer", "ratatui", "macos"]
+categories = ["command-line-utilities", "multimedia::audio"]
 
 [dependencies]
 anyhow = "1"

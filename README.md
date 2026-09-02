@@ -14,7 +14,14 @@ macOS 14.2+, Rust 1.85+, Music.app.
 
 ## Install
 
-    cargo install --path .
+Homebrew (Apple Silicon and Intel):
+
+    brew install roma-888/tap/appytui
+
+Or grab a binary from the [releases page](https://github.com/roma-888/appytui/releases),
+or build from source with Rust 1.85+:
+
+    cargo install --git https://github.com/roma-888/appytui
 
 ## Permissions
 
