@@ -1,0 +1,16 @@
+[color]
+# Catppuccin Mocha, bottom -> top: blue, sapphire, teal, green, yellow, peach, red, mauve
+# background left unset so the terminal's transparency shows through
+gradient = 1
+gradient_color_1 = '#89b4fa'
+gradient_color_2 = '#74c7ec'
+gradient_color_3 = '#94e2d5'
+gradient_color_4 = '#a6e3a1'
+gradient_color_5 = '#f9e2af'
+gradient_color_6 = '#fab387'
+gradient_color_7 = '#f38ba8'
+gradient_color_8 = '#cba6f7'
+ui_accent = '#89b4fa'
+ui_highlight = '#f9e2af'
+ui_selection_bg = '#313244'
+ui_dim = '#6c7086'
