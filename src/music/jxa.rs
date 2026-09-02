@@ -127,7 +127,13 @@ Music.delete(pl.tracks);
 for (const id of ARGS.tracks) {
   try { Music.duplicate(lib.tracks.whose({ persistentID: id })[0], { to: pl }); } catch (e) {}
 }
+// With shuffle on, playing a playlist starts at a random track. Music.app's
+// own behaviour is the chosen track first, then the rest shuffled: turning
+// shuffle off around `play` and back on gives exactly that.
+const shuffled = Music.shuffleEnabled();
+if (shuffled) { Music.shuffleEnabled = false; }
 pl.play();
+if (shuffled) { Music.shuffleEnabled = true; }
 "ok";
 "#;
 
