@@ -97,6 +97,8 @@ fn handle(bridge: &mut dyn MusicBridge, events: &Sender<Event>, cmd: Command) {
             let _ = events.send(Event::Playlists(p));
         }),
         Command::PlayTracks(tracks) => bridge.play_tracks(&tracks),
+        Command::PrepareTracks(tracks) => bridge.prepare_tracks(&tracks),
+        Command::PlayPrepared => bridge.play_prepared(),
         Command::PlayPause => bridge.play_pause(),
         Command::Next => bridge.next(),
         Command::Previous => bridge.previous(),

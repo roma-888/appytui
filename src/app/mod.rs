@@ -7,7 +7,7 @@ use ratatui_image::protocol::StatefulProtocol;
 
 use crate::config::VizSettings;
 use crate::config::theme::Theme;
-use crate::music::model::{PlayerState, PlayerStatus, Playlist, Track};
+use crate::music::model::{PlayerState, PlayerStatus, Playlist, Track, TrackId};
 
 pub mod library;
 pub mod playback;
@@ -62,6 +62,10 @@ pub struct App {
     /// fuzzy matcher over the whole library on every animation frame.
     rows_cache: Option<(RowsKey, Vec<Row>)>,
     rows_gen: u64,
+    /// The idle playlist holds an edited queue waiting for the track boundary.
+    pub pending_requeue: bool,
+    /// Track we just switched away from; polls still naming it are stale.
+    pub switching_from: Option<TrackId>,
     /// xorshift state for shuffle sampling; avoids a dependency for one use.
     rng: u64,
 }
@@ -104,6 +108,8 @@ impl App {
             filter: Filter::new(),
             rows_cache: None,
             rows_gen: 0,
+            pending_requeue: false,
+            switching_from: None,
             rng: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_nanos() as u64)

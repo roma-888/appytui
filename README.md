@@ -37,6 +37,8 @@ app, not to appytui. If you decline audio recording the visualizer runs simulate
 | j/k ↓/↑, g/G, Ctrl-d/u | move |
 | Enter / Backspace | play or open / back |
 | a | play the list, album, artist or playlist under the cursor from the top |
+| e / E | add to queue / play next (a track, or a whole album, artist or playlist) |
+| d | remove the selected track from the queue (Queue tab) |
 | Space, n, p | pause, next, previous |
 | ← / → | seek 5 s |
 | + / - | volume |
@@ -62,8 +64,13 @@ Set it to `kitty`, `sixel`, `iterm2` or `halfblocks` to force one.
 - AirPlay output: the tap listens to the Mac's default output device, so streaming to
   AirPlay speakers shows a quiet visualizer.
 - Library only: no Apple Music catalog search.
-- A playlist named `appytui` appears in Music.app. Playing anything copies the tracks
-  into it so Music.app keeps playing (and shuffles) within that list; it is hidden from
-  the Playlists tab. Albums, artists and playlists are sent whole. Songs and Search send
-  the next 25 tracks, or with shuffle on the chosen track plus 24 picked at random from
-  the list. Copying costs about 17 ms per track, so a long artist takes a moment to start.
+- Two playlists named `appytui` and `appytui 2` appear in Music.app. Playing anything
+  copies the tracks into one of them so Music.app keeps playing (and shuffles) within
+  that list; both are hidden from the Playlists tab. Albums, artists and playlists are
+  sent whole. Songs and Search send the next 25 tracks, or with shuffle on the chosen
+  track plus 24 picked at random from the list. Copying costs about 17 ms per track, so
+  a long artist takes a moment to start.
+- Queue edits (`e`, `E`, `d`) take effect at the end of the current track: Music.app
+  fixes its queue when a playlist starts, so the edited queue is copied into the other
+  playlist and started just before the current track ends. Pressing `n` starts it at once.
+  With shuffle on, `E` behaves like `e`.

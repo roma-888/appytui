@@ -19,6 +19,11 @@ pub trait MusicBridge: Send {
     fn music_pid(&mut self) -> Result<u32>;
     /// Play `tracks` in order, starting with the first, as one playlist.
     fn play_tracks(&mut self, tracks: &[TrackId]) -> Result<()>;
+    /// Copy `tracks` into the idle playlist without disturbing playback, so
+    /// `play_prepared` can switch to them with one call.
+    fn prepare_tracks(&mut self, tracks: &[TrackId]) -> Result<()>;
+    /// Start the playlist filled by the last `prepare_tracks`.
+    fn play_prepared(&mut self) -> Result<()>;
     fn play_pause(&mut self) -> Result<()>;
     fn next(&mut self) -> Result<()>;
     fn previous(&mut self) -> Result<()>;
@@ -34,6 +39,8 @@ pub enum Command {
     LoadLibrary,
     LoadPlaylists,
     PlayTracks(Vec<TrackId>),
+    PrepareTracks(Vec<TrackId>),
+    PlayPrepared,
     PlayPause,
     Next,
     Previous,

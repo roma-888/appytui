@@ -14,6 +14,7 @@ pub struct FakeBridge {
     pub calls: Vec<String>,
     /// When true, `status()` fails until `ensure_running()` is called.
     pub fail_status: bool,
+    pub prepared: Vec<TrackId>,
 }
 
 impl FakeBridge {
@@ -76,6 +77,20 @@ impl MusicBridge for FakeBridge {
         }
         Ok(())
     }
+    fn prepare_tracks(&mut self, tracks: &[TrackId]) -> Result<()> {
+        let ids: Vec<&str> = tracks.iter().map(|t| t.0.as_str()).collect();
+        self.calls
+            .push(format!("prepare_tracks [{}]", ids.join(",")));
+        self.prepared = tracks.to_vec();
+        Ok(())
+    }
+    fn play_prepared(&mut self) -> Result<()> {
+        self.calls.push("play_prepared".into());
+        if let Some(first) = self.prepared.first().cloned() {
+            self.start(&first);
+        }
+        Ok(())
+    }
     fn play_pause(&mut self) -> Result<()> {
         self.calls.push("play_pause".into());
         self.status.state = match self.status.state {
@@ -124,8 +139,20 @@ mod tests {
         b.play_tracks(&[TrackId("B".into()), TrackId("A".into())])
             .unwrap();
         assert_eq!(b.status().unwrap().track_id, Some(TrackId("B".into())));
+        b.prepare_tracks(&[TrackId("A".into())]).unwrap();
+        assert_eq!(b.status().unwrap().track_id, Some(TrackId("B".into())));
+        b.play_prepared().unwrap();
+        assert_eq!(b.status().unwrap().track_id, Some(TrackId("A".into())));
         b.play_pause().unwrap();
-        assert_eq!(b.calls, vec!["play_tracks [B,A]", "play_pause"]);
+        assert_eq!(
+            b.calls,
+            vec![
+                "play_tracks [B,A]",
+                "prepare_tracks [A]",
+                "play_prepared",
+                "play_pause"
+            ]
+        );
         assert_eq!(b.status().unwrap().state, PlayerState::Paused);
     }
 }

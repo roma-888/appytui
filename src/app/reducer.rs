@@ -5,7 +5,10 @@ use std::time::Instant;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::library::Library;
-use super::playback::{play_all, play_list, track_ids};
+use super::playback::{
+    dequeue, enqueue, maybe_switch, on_track_changed_while_pending, play_all, play_list,
+    switch_now, track_ids,
+};
 use super::views::{Drill, Row, Tab};
 use super::{App, MESSAGE_TTL, OPTIMISTIC_WINDOW};
 use crate::art::{ArtRequest, ArtResult};
@@ -48,7 +51,7 @@ pub fn reduce(app: &mut App, action: Action) -> Vec<Effect> {
             {
                 app.message = None;
             }
-            Vec::new()
+            maybe_switch(app)
         }
         Action::Bridge(ev) => on_bridge(app, ev),
         Action::Viz(VizEvent::Frame(f)) => {
@@ -85,6 +88,17 @@ fn on_bridge(app: &mut App, ev: Event) -> Vec<Effect> {
         }
         Event::Status(s) => {
             let mut effects = Vec::new();
+            let optimistic = app
+                .optimistic_at
+                .is_some_and(|t| t.elapsed() < OPTIMISTIC_WINDOW);
+            // A poll taken before a queue switch still names the old track.
+            if let Some(from) = &app.switching_from {
+                if optimistic && s.track_id.as_ref() == Some(from) {
+                    return Vec::new();
+                }
+                app.switching_from = None;
+            }
+            let previous_track = app.status.track_id.clone();
             let was_playing = app.status.state == PlayerState::Playing;
             if let Some(id) = &s.track_id {
                 let before = app.context.index;
@@ -94,9 +108,6 @@ fn on_bridge(app: &mut App, ev: Event) -> Vec<Effect> {
                 }
             }
             let mut s = s;
-            let optimistic = app
-                .optimistic_at
-                .is_some_and(|t| t.elapsed() < OPTIMISTIC_WINDOW);
             if optimistic {
                 s.volume = app.status.volume;
                 s.shuffle = app.status.shuffle;
@@ -127,6 +138,9 @@ fn on_bridge(app: &mut App, ev: Event) -> Vec<Effect> {
                 effects.push(Effect::Viz(Control::Playing(playing)));
             }
             effects.extend(art_for_current_track(app));
+            if app.status.track_id != previous_track || app.status.state == PlayerState::Stopped {
+                effects.extend(on_track_changed_while_pending(app));
+            }
             return effects;
         }
         Event::MusicPid(pid) => {
@@ -220,6 +234,9 @@ fn on_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Char('G') | KeyCode::End => app.view_mut().move_cursor(isize::MAX / 2, len),
         KeyCode::Enter => return on_enter(app),
         KeyCode::Char('a') => return play_all(app),
+        KeyCode::Char('e') => return enqueue(app, false),
+        KeyCode::Char('E') => return enqueue(app, true),
+        KeyCode::Char('d') => return dequeue(app),
         KeyCode::Backspace => {
             let view = app.view_mut();
             if view.drill != Drill::Top {
@@ -256,7 +273,13 @@ fn on_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
                 Effect::Viz(Control::Playing(playing)),
             ];
         }
-        KeyCode::Char('n') => return vec![Effect::Send(Command::Next)],
+        KeyCode::Char('n') => {
+            // The edited queue is waiting in the idle playlist; start it now.
+            if app.pending_requeue {
+                return switch_now(app);
+            }
+            return vec![Effect::Send(Command::Next)];
+        }
         KeyCode::Char('p') => return vec![Effect::Send(Command::Previous)],
         KeyCode::Right => return seek_by(app, 5.0),
         KeyCode::Left => return seek_by(app, -5.0),
@@ -601,7 +624,7 @@ mod tests {
     fn stale_poll_right_after_space_does_not_flip_state_or_clock() {
         let mut a = playing_app(10.0, 2);
         reduce(&mut a, key(' '));
-        poll(&mut a, PlayerState::Playing, 12.3);
+        poll(&mut a, PlayerState::Playing, 12.3, "1");
         assert_eq!(a.status.state, PlayerState::Paused);
         assert!(
             (a.position_now() - 12.0).abs() < 0.2,
@@ -609,7 +632,7 @@ mod tests {
             a.position_now()
         );
         // A poll that agrees with the toggle is taken as the new anchor.
-        poll(&mut a, PlayerState::Paused, 12.1);
+        poll(&mut a, PlayerState::Paused, 12.1, "1");
         assert_eq!(a.status.position_secs, 12.1);
     }
 
@@ -617,7 +640,7 @@ mod tests {
     fn poll_close_to_the_local_clock_keeps_the_anchor() {
         let mut a = playing_app(10.0, 1);
         let anchor = a.status_at;
-        poll(&mut a, PlayerState::Playing, 10.8);
+        poll(&mut a, PlayerState::Playing, 10.8, "1");
         assert_eq!(a.status_at, anchor);
         assert_eq!(a.status.position_secs, 10.0);
         assert!(
@@ -631,7 +654,7 @@ mod tests {
     fn poll_far_from_the_local_clock_re_anchors() {
         let mut a = playing_app(10.0, 1);
         let anchor = a.status_at;
-        poll(&mut a, PlayerState::Playing, 30.0);
+        poll(&mut a, PlayerState::Playing, 30.0, "1");
         assert!(a.status_at > anchor);
         assert_eq!(a.status.position_secs, 30.0);
     }
@@ -640,7 +663,7 @@ mod tests {
     fn poll_while_paused_always_takes_the_position() {
         let mut a = playing_app(10.0, 1);
         a.status.state = PlayerState::Paused;
-        poll(&mut a, PlayerState::Paused, 10.4);
+        poll(&mut a, PlayerState::Paused, 10.4, "1");
         assert_eq!(a.status.position_secs, 10.4);
     }
 
@@ -661,7 +684,7 @@ mod tests {
             a.position_now()
         );
         // A stale poll from before the seek must not drag the clock back.
-        poll(&mut a, PlayerState::Playing, 12.4);
+        poll(&mut a, PlayerState::Playing, 12.4, "1");
         assert!(
             (a.position_now() - 12.0).abs() < 0.2,
             "{}",

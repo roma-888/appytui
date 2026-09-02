@@ -86,12 +86,12 @@ pub fn playing_app(position: f64, secs_ago: u64) -> App {
     a
 }
 
-pub fn poll(a: &mut App, state: PlayerState, position: f64) -> Vec<Effect> {
+pub fn poll(a: &mut App, state: PlayerState, position: f64, track: &str) -> Vec<Effect> {
     reduce(
         a,
         Action::Bridge(Event::Status(PlayerStatus {
             state,
-            track_id: Some(id(1)),
+            track_id: Some(TrackId(track.into())),
             position_secs: position,
             ..PlayerStatus::default()
         })),

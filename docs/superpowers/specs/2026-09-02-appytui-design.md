@@ -150,14 +150,16 @@ In Music.app 1.6 playing a track object gives it a one-track context followed
 by Autoplay, even for a track of a user playlist. The only way to make
 Music.app continue (and shuffle) within a list is to play a playlist object,
 and a playlist always starts from its first track. Every play therefore goes
-through `play_tracks`, which finds or creates a user playlist named `appytui`,
+through `play_tracks`, which finds or creates one of two user playlists,
+`appytui` and `appytui 2` (they alternate, so a queue can be prepared in the
+idle one while the other plays),
 empties it with `delete pl.tracks` (which does not touch the library), copies
 the given tracks into it in order with `duplicate`, and plays the playlist.
 Every Apple Event costs about 17 ms (Music.app services one per display
 frame), so the loop sends one per track and lets a missing track throw rather
 than checking `exists()` first. Music.app snapshots the queue when the
 playlist starts, so tracks appended afterwards are not played; the whole list
-must be in place before `play`. The `appytui` playlist is skipped by
+must be in place before `play`. Both appytui playlists are skipped by
 `load_playlists`.
 
 ## 6. App state and reducer
@@ -212,6 +214,24 @@ track ID in the context (nearest occurrence after the old index, else first).
 The Queue tab shows the context from the current index onward. When shuffle is
 on the queue shows the context unordered with a "shuffle on" note, since the
 real order is unknown.
+
+Queue editing. `e` appends the tracks under the cursor (one track, or a whole
+album, artist or playlist) to the context; `E` inserts them after the current
+track (or appends when shuffle is on, since Music.app picks the order); `d` on
+the Queue tab removes that row. Music.app fixes its queue when a playlist
+starts, and re-playing restarts the current track, so edits are not applied
+immediately. Each edit copies the context rotated to start after the current
+track into the idle one of the two appytui playlists (`prepare_tracks`) and
+sets `pending_requeue`. On each tick, when `SWITCH_LEAD_SECS` (0.35 s) or
+less remain of the current track, the app plays the prepared playlist
+(`play_prepared`), advances the context index, shows the next track as playing,
+and remembers the track it switched from so a poll still naming it is ignored
+for the optimistic window. `n` while pending does the same at once. If a poll
+shows Music.app moved to another track on the queue before the switch, the
+queue is re-prepared from there; if it left the queue or stopped, the prepared
+playlist is started immediately. Any fresh play clears the pending state.
+Playing a playlist with shuffle on starts at a random track, so `play` turns
+shuffle off around it and back on, which plays the first track then shuffles.
 
 ## 8. Visualizer
 

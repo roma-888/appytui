@@ -12,6 +12,8 @@ pub const KEYS: &[(&str, &str)] = &[
     ("Ctrl-d / Ctrl-u", "half page"),
     ("Enter", "play selected / open"),
     ("a", "play list, album, artist or playlist from the top"),
+    ("e / E", "add to queue / play next"),
+    ("d", "remove from queue (Queue tab)"),
     ("Backspace", "back out of album/artist/playlist"),
     ("Space", "play / pause"),
     ("n / p", "next / previous"),

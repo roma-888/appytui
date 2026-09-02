@@ -34,6 +34,15 @@ function send(obj) {
   var s = JSON.stringify(obj) + "\n";
   stdout.writeData($.NSString.alloc.initWithUTF8String(s).dataUsingEncoding($.NSUTF8StringEncoding));
 }
+// With shuffle on, playing a playlist starts at a random track. Music.app's
+// own behaviour is the chosen track first, then the rest shuffled: turning
+// shuffle off around `play` and back on gives exactly that.
+function playPlaylist(pl) {
+  var shuffled = Music.shuffleEnabled();
+  if (shuffled) { Music.shuffleEnabled = false; }
+  pl.play();
+  if (shuffled) { Music.shuffleEnabled = true; }
+}
 function handle(line) {
   var req;
   try { req = JSON.parse(line); } catch (e) { send({ id: null, ok: false, error: "bad request" }); return; }
@@ -75,7 +84,7 @@ for (const p of Music.userPlaylists()) {
   let cls = ""; try { cls = p.class(); } catch (e) {}
   if (cls === "folderPlaylist") continue;
   if (p.specialKind() !== "none") continue;
-  if (p.name() === ARGS.skip) continue;
+  if (ARGS.skip.includes(p.name())) continue;
   out.push({ id: p.persistentID(), name: p.name(), smart: p.smart(), track_ids: p.tracks.persistentID() });
 }
 JSON.stringify(out);
@@ -106,9 +115,10 @@ JSON.stringify({ state: st, track_id, track, volume: Music.soundVolume(),
   position_secs: Music.playerPosition() || 0 });
 "#;
 
-/// Name of the playlist appytui owns for album, artist and playlist playback.
-/// It is hidden from the Playlists tab.
-pub const OWN_PLAYLIST: &str = "appytui";
+/// The two playlists appytui owns. Playback alternates between them: while
+/// one plays, the other is filled with the next queue so the switch at a track
+/// boundary is a single call. Both are hidden from the Playlists tab.
+pub const OWN_PLAYLISTS: [&str; 2] = ["appytui", "appytui 2"];
 
 // Playing a track object gives Music.app a one-track context followed by
 // Autoplay, even for a track of a user playlist. Playing a playlist object is
@@ -118,7 +128,7 @@ pub const OWN_PLAYLIST: &str = "appytui";
 // Every Apple Event costs ~17 ms, so the loop sends exactly one per track: the
 // `whose` specifier is built locally and a missing track makes `duplicate`
 // throw, which is cheaper than asking `exists()` first.
-const PLAY_TRACKS: &str = r#"
+const FILL_TRACKS: &str = r#"
 let pl = Music.userPlaylists.whose({ name: ARGS.name })[0];
 if (!pl.exists()) {
   pl = Music.make({ new: "playlist", withProperties: { name: ARGS.name } });
@@ -127,13 +137,12 @@ Music.delete(pl.tracks);
 for (const id of ARGS.tracks) {
   try { Music.duplicate(lib.tracks.whose({ persistentID: id })[0], { to: pl }); } catch (e) {}
 }
-// With shuffle on, playing a playlist starts at a random track. Music.app's
-// own behaviour is the chosen track first, then the rest shuffled: turning
-// shuffle off around `play` and back on gives exactly that.
-const shuffled = Music.shuffleEnabled();
-if (shuffled) { Music.shuffleEnabled = false; }
-pl.play();
-if (shuffled) { Music.shuffleEnabled = true; }
+if (ARGS.play) { playPlaylist(pl); }
+"ok";
+"#;
+
+const PLAY_PLAYLIST: &str = r#"
+playPlaylist(Music.userPlaylists.whose({ name: ARGS.name })[0]);
 "ok";
 "#;
 
@@ -257,6 +266,8 @@ pub struct JxaBridge {
     server: Option<Server>,
     /// Snapshot of the last track seen, so the status poll can skip re-reading it.
     last_track: Option<Track>,
+    /// Which of `OWN_PLAYLISTS` was played last; the other one is idle.
+    slot: usize,
 }
 
 /// Remember a fresh track snapshot, or restore the cached one when the poll
@@ -281,6 +292,7 @@ impl JxaBridge {
             timeout: TIMEOUT,
             server: None,
             last_track: None,
+            slot: 0,
         }
     }
 
@@ -304,6 +316,17 @@ impl JxaBridge {
 
     fn run(&mut self, script: &str, args: Value) -> Result<String> {
         self.eval(script, args, self.timeout)
+    }
+
+    /// Fill the idle playlist with `tracks`, and play it if `play`.
+    fn fill(&mut self, tracks: &[TrackId], play: bool) -> Result<()> {
+        let ids: Vec<&str> = tracks.iter().map(|t| t.0.as_str()).collect();
+        let name = OWN_PLAYLISTS[1 - self.slot];
+        let args = json!({ "name": name, "tracks": ids, "play": play });
+        // Each track copied into the playlist is a round trip inside Music.app
+        // (about 17 ms), so a long artist list takes a few seconds.
+        self.eval(FILL_TRACKS, args, Duration::from_secs(60))
+            .map(|_| ())
     }
 
     #[cfg(test)]
@@ -346,7 +369,7 @@ impl MusicBridge for JxaBridge {
         // Bulk dump of every playlist takes a few seconds on large libraries.
         parse_playlists(&self.eval(
             PLAYLISTS,
-            json!({ "skip": OWN_PLAYLIST }),
+            json!({ "skip": OWN_PLAYLISTS }),
             Duration::from_secs(60),
         )?)
     }
@@ -368,12 +391,18 @@ impl MusicBridge for JxaBridge {
             .context("Music.app is not running")
     }
     fn play_tracks(&mut self, tracks: &[TrackId]) -> Result<()> {
-        let ids: Vec<&str> = tracks.iter().map(|t| t.0.as_str()).collect();
-        let args = json!({ "name": OWN_PLAYLIST, "tracks": ids });
-        // Each track copied into the playlist is a round trip inside Music.app
-        // (about 17 ms), so a long artist list takes a few seconds.
-        self.eval(PLAY_TRACKS, args, Duration::from_secs(60))
-            .map(|_| ())
+        self.fill(tracks, true)?;
+        self.slot = 1 - self.slot;
+        Ok(())
+    }
+    fn prepare_tracks(&mut self, tracks: &[TrackId]) -> Result<()> {
+        self.fill(tracks, false)
+    }
+    fn play_prepared(&mut self) -> Result<()> {
+        let name = OWN_PLAYLISTS[1 - self.slot];
+        self.run(PLAY_PLAYLIST, json!({ "name": name }))?;
+        self.slot = 1 - self.slot;
+        Ok(())
     }
     fn play_pause(&mut self) -> Result<()> {
         self.run(PLAY_PAUSE, json!({})).map(|_| ())
@@ -434,12 +463,23 @@ mod tests {
         b.next().unwrap();
         std::thread::sleep(Duration::from_millis(1500));
         let second = b.status().unwrap().track_id;
+        // Prepare the idle playlist while playing, then switch to it.
+        b.prepare_tracks(&[ids[0].clone()]).unwrap();
+        assert_eq!(b.status().unwrap().track_id.as_ref(), Some(&ids[1]));
+        b.play_prepared().unwrap();
+        std::thread::sleep(Duration::from_millis(1500));
+        let third = b.status().unwrap().track_id;
         b.play_pause().unwrap();
         b.set_volume(volume).unwrap();
         assert_eq!(first.as_ref(), Some(&ids[0]));
         assert_eq!(second.as_ref(), Some(&ids[1]));
+        assert_eq!(third.as_ref(), Some(&ids[0]));
         let playlists = b.load_playlists().unwrap();
-        assert!(playlists.iter().all(|p| p.name != OWN_PLAYLIST));
+        assert!(
+            playlists
+                .iter()
+                .all(|p| !OWN_PLAYLISTS.contains(&p.name.as_str()))
+        );
     }
 
     fn status_with(track_id: Option<&str>, track: Option<Track>) -> PlayerStatus {

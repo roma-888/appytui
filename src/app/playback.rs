@@ -16,6 +16,10 @@ use crate::music::model::{PlayerState, TrackId};
 /// before playback starts.
 pub const WINDOW: usize = 25;
 
+/// How long before the end of the current track the prepared queue is started.
+/// Late enough to lose almost nothing, early enough for the call to land.
+pub const SWITCH_LEAD_SECS: f64 = 0.35;
+
 /// `a`: play the list under the cursor from its first track. On an album,
 /// artist or playlist row that is the collection itself; anywhere else it is
 /// the visible list.
@@ -24,20 +28,180 @@ pub fn play_all(app: &mut App) -> Vec<Effect> {
     let Some(lib) = app.library.as_ref() else {
         return Vec::new();
     };
+    let list = collection_tracks(app, rows.get(app.view().cursor))
+        .unwrap_or_else(|| track_ids(lib, &rows));
+    play_list(app, list, 0)
+}
+
+/// The tracks of an album, artist or playlist row; `None` for anything else.
+fn collection_tracks(app: &App, row: Option<&Row>) -> Option<Vec<TrackId>> {
+    let lib = app.library.as_ref()?;
     let by_index =
         |idx: &[usize]| -> Vec<TrackId> { idx.iter().map(|&i| lib.tracks[i].id.clone()).collect() };
-    let list = match rows.get(app.view().cursor) {
-        Some(Row::Album(a)) => by_index(&lib.albums[*a].tracks),
-        Some(Row::Artist(a)) => by_index(&lib.artists[*a].tracks),
-        Some(Row::Playlist(p)) => app.playlists[*p]
-            .track_ids
-            .iter()
-            .filter(|id| lib.index_of(id).is_some())
-            .cloned()
-            .collect(),
-        _ => track_ids(lib, &rows),
+    match row? {
+        Row::Album(a) => Some(by_index(&lib.albums[*a].tracks)),
+        Row::Artist(a) => Some(by_index(&lib.artists[*a].tracks)),
+        Row::Playlist(p) => Some(
+            app.playlists[*p]
+                .track_ids
+                .iter()
+                .filter(|id| lib.index_of(id).is_some())
+                .cloned()
+                .collect(),
+        ),
+        Row::Track(_) => None,
+    }
+}
+
+/// `e` / `E`: add the tracks under the cursor (a collection's, or the one
+/// track) to the end of the queue, or right after the current track. Starts
+/// playback instead when nothing is playing.
+pub fn enqueue(app: &mut App, next: bool) -> Vec<Effect> {
+    let rows = app.rows(app.tab);
+    let row = rows.get(app.view().cursor);
+    let tracks = match (collection_tracks(app, row), row, app.library.as_ref()) {
+        (Some(tracks), _, _) => tracks,
+        (None, Some(Row::Track(i)), Some(lib)) => vec![lib.tracks[*i].id.clone()],
+        _ => return Vec::new(),
     };
-    play_list(app, list, 0)
+    if tracks.is_empty() {
+        return Vec::new();
+    }
+    if app.context.track_ids.is_empty() || app.status.track_id.is_none() {
+        return play_list(app, tracks, 0);
+    }
+    let what = describe(app, &tracks);
+    // Music.app picks the order under shuffle, so "next" degrades to "later".
+    let next = next && !app.status.shuffle;
+    let len = app.context.track_ids.len();
+    let at = if next {
+        (app.context.index + 1).min(len)
+    } else {
+        len
+    };
+    app.context.track_ids.splice(at..at, tracks);
+    app.notify(if next {
+        format!("Playing next: {what}")
+    } else {
+        format!("Added to queue: {what}")
+    });
+    requeue(app)
+}
+
+/// `d` on the Queue tab: drop the row under the cursor from the queue.
+pub fn dequeue(app: &mut App) -> Vec<Effect> {
+    if app.tab != Tab::Queue {
+        return Vec::new();
+    }
+    let cursor = app.view().cursor;
+    let Some(lib) = app.library.as_ref() else {
+        return Vec::new();
+    };
+    // Queue rows are the upcoming tracks that are in the library, in order.
+    let Some(pos) = app
+        .context
+        .track_ids
+        .iter()
+        .enumerate()
+        .skip(app.context.index + 1)
+        .filter(|(_, id)| lib.index_of(id).is_some())
+        .nth(cursor)
+        .map(|(i, _)| i)
+    else {
+        return Vec::new();
+    };
+    let removed = app.context.track_ids.remove(pos);
+    let what = describe(app, std::slice::from_ref(&removed));
+    app.notify(format!("Removed from queue: {what}"));
+    requeue(app)
+}
+
+fn describe(app: &App, tracks: &[TrackId]) -> String {
+    match tracks {
+        [one] => app
+            .library
+            .as_ref()
+            .and_then(|l| l.get(one))
+            .map(|t| t.name.clone())
+            .unwrap_or_default(),
+        many => format!("{} tracks", many.len()),
+    }
+}
+
+/// Copy the queue after the current track into the idle playlist, so the
+/// switch at the end of the track is a single call. The current track goes
+/// last, matching how a fresh play wraps the earlier tracks.
+fn requeue(app: &mut App) -> Vec<Effect> {
+    app.invalidate_rows();
+    let len = app.context.track_ids.len();
+    if len < 2 {
+        app.pending_requeue = false;
+        return Vec::new();
+    }
+    let mut prepared = app.context.track_ids.clone();
+    prepared.rotate_left((app.context.index + 1) % len);
+    app.pending_requeue = true;
+    vec![Effect::Send(Command::PrepareTracks(prepared))]
+}
+
+/// Start the prepared queue now: at the track boundary, on `n`, or when
+/// Music.app wandered off the queue. Shows the next track as playing at once.
+pub fn switch_now(app: &mut App) -> Vec<Effect> {
+    app.pending_requeue = false;
+    let len = app.context.track_ids.len();
+    if len == 0 {
+        return Vec::new();
+    }
+    app.switching_from = app.status.track_id.take();
+    app.context.index = (app.context.index + 1) % len;
+    let now = Instant::now();
+    app.status.track_id = Some(app.context.track_ids[app.context.index].clone());
+    app.status.state = PlayerState::Playing;
+    app.status.position_secs = 0.0;
+    app.status_at = now;
+    app.optimistic_at = Some(now);
+    app.invalidate_rows();
+    let mut effects = vec![Effect::Send(Command::PlayPrepared)];
+    effects.extend(art_for_current_track(app));
+    effects
+}
+
+/// Tick: start the prepared queue just before the current track ends.
+pub fn maybe_switch(app: &mut App) -> Vec<Effect> {
+    if !app.pending_requeue || app.status.state != PlayerState::Playing {
+        return Vec::new();
+    }
+    let Some(duration) = app
+        .current_track()
+        .map(|t| t.duration_secs)
+        .filter(|d| *d > 0.0)
+    else {
+        return Vec::new();
+    };
+    if duration - app.position_now() <= SWITCH_LEAD_SECS {
+        switch_now(app)
+    } else {
+        Vec::new()
+    }
+}
+
+/// A status poll changed the track (or stopped) while an edited queue was
+/// waiting. If Music.app moved along our queue, re-prepare from the new
+/// track; if it left the queue or stopped, start the prepared one now.
+pub fn on_track_changed_while_pending(app: &mut App) -> Vec<Effect> {
+    if !app.pending_requeue {
+        return Vec::new();
+    }
+    let on_queue = app
+        .status
+        .track_id
+        .as_ref()
+        .is_some_and(|id| app.context.track_ids.contains(id));
+    if app.status.state == PlayerState::Stopped || !on_queue {
+        switch_now(app)
+    } else {
+        requeue(app)
+    }
 }
 
 pub fn track_ids(lib: &Library, rows: &[Row]) -> Vec<TrackId> {
@@ -82,6 +246,8 @@ pub fn play_list(app: &mut App, list: Vec<TrackId>, index: usize) -> Vec<Effect>
         ids
     };
     app.context = PlayContext::new(ids.clone(), 0);
+    app.pending_requeue = false;
+    app.switching_from = None;
     app.invalidate_rows();
     // Filling the playlist takes up to a second; show the chosen track now and
     // let the next status poll correct anything.
@@ -106,6 +272,9 @@ pub fn play_list(app: &mut App, list: Vec<TrackId>, index: usize) -> Vec<Effect>
 mod tests {
     use ratatui::crossterm::event::KeyCode;
 
+    use std::time::Instant;
+
+    use super::super::App;
     use super::super::reducer::{Action, Effect, reduce};
     use super::super::testing::*;
     use super::super::views::{Drill, Row, Tab};
@@ -314,5 +483,182 @@ mod tests {
             })),
         );
         assert!(!fx.iter().any(|e| matches!(e, Effect::LookupArt(_))));
+    }
+
+    /// Album A ([1, 2]) playing from track 1, then move to the Songs tab with
+    /// the cursor on track 3.
+    fn queued_app() -> App {
+        let mut a = app();
+        reduce(&mut a, key('2'));
+        reduce(&mut a, code(KeyCode::Enter));
+        reduce(&mut a, code(KeyCode::Enter));
+        assert_eq!(a.context.track_ids, vec![id(1), id(2)]);
+        reduce(&mut a, key('1'));
+        reduce(&mut a, key('G'));
+        a
+    }
+
+    fn prepared(fx: &[Effect]) -> Vec<TrackId> {
+        match fx {
+            [Effect::Send(Command::PrepareTracks(ids))] => ids.clone(),
+            other => panic!("expected one PrepareTracks, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn e_appends_to_the_queue_and_prepares_the_rest() {
+        let mut a = queued_app();
+        let fx = reduce(&mut a, key('e'));
+        assert_eq!(a.context.track_ids, vec![id(1), id(2), id(3)]);
+        assert_eq!(a.context.index, 0);
+        assert_eq!(prepared(&fx), vec![id(2), id(3), id(1)]);
+        assert!(a.pending_requeue);
+        let msg = a
+            .message
+            .as_ref()
+            .map(|(m, _)| m.clone())
+            .unwrap_or_default();
+        assert!(msg.contains("Gamma"), "{msg:?}");
+        reduce(&mut a, key('6'));
+        assert_eq!(a.rows(Tab::Queue), vec![Row::Track(1), Row::Track(2)]);
+    }
+
+    #[test]
+    fn shift_e_inserts_after_the_current_track() {
+        let mut a = queued_app();
+        let fx = reduce(&mut a, key('E'));
+        assert_eq!(a.context.track_ids, vec![id(1), id(3), id(2)]);
+        assert_eq!(prepared(&fx), vec![id(3), id(2), id(1)]);
+    }
+
+    #[test]
+    fn shift_e_with_shuffle_on_appends() {
+        let mut a = queued_app();
+        a.status.shuffle = true;
+        reduce(&mut a, key('E'));
+        assert_eq!(a.context.track_ids, vec![id(1), id(2), id(3)]);
+    }
+
+    #[test]
+    fn e_with_nothing_playing_starts_that_track() {
+        let mut a = app();
+        reduce(&mut a, key('j'));
+        let fx = reduce(&mut a, key('e'));
+        assert_eq!(sent_tracks(&fx), vec![id(2)]);
+        assert!(!a.pending_requeue);
+    }
+
+    #[test]
+    fn e_on_an_album_row_enqueues_the_whole_album() {
+        let mut a = app();
+        reduce(&mut a, key('4'));
+        reduce(&mut a, code(KeyCode::Enter));
+        reduce(&mut a, code(KeyCode::Enter));
+        assert_eq!(a.context.track_ids, vec![id(3), id(1)]);
+        reduce(&mut a, key('2'));
+        let fx = reduce(&mut a, key('e'));
+        assert_eq!(a.context.track_ids, vec![id(3), id(1), id(1), id(2)]);
+        assert_eq!(prepared(&fx), vec![id(1), id(1), id(2), id(3)]);
+    }
+
+    #[test]
+    fn d_on_the_queue_tab_removes_that_row() {
+        let mut a = queued_app();
+        reduce(&mut a, key('e'));
+        reduce(&mut a, key('6'));
+        reduce(&mut a, key('j'));
+        let fx = reduce(&mut a, key('d'));
+        assert_eq!(a.context.track_ids, vec![id(1), id(2)]);
+        assert_eq!(prepared(&fx), vec![id(2), id(1)]);
+        assert_eq!(a.rows(Tab::Queue), vec![Row::Track(1)]);
+    }
+
+    #[test]
+    fn d_outside_the_queue_tab_does_nothing() {
+        let mut a = queued_app();
+        assert_eq!(reduce(&mut a, key('d')), Vec::new());
+        assert_eq!(a.context.track_ids, vec![id(1), id(2)]);
+    }
+
+    fn pending_near_end(remaining: f64) -> App {
+        let mut a = queued_app();
+        reduce(&mut a, key('e'));
+        a.status.state = PlayerState::Playing;
+        a.status.track_id = Some(id(1));
+        a.status.position_secs = 200.0 - remaining;
+        a.status_at = Instant::now();
+        a
+    }
+
+    #[test]
+    fn tick_switches_to_the_prepared_list_at_the_end_of_the_track() {
+        let mut a = pending_near_end(0.2);
+        let fx = reduce(&mut a, Action::Tick);
+        assert!(fx.contains(&Effect::Send(Command::PlayPrepared)), "{fx:?}");
+        assert!(!a.pending_requeue);
+        assert_eq!(a.context.index, 1);
+        assert_eq!(a.status.track_id, Some(id(2)));
+        assert!(a.position_now() < 0.5);
+        // Only once.
+        assert!(!reduce(&mut a, Action::Tick).contains(&Effect::Send(Command::PlayPrepared)));
+    }
+
+    #[test]
+    fn tick_does_not_switch_early_or_while_paused() {
+        let mut a = pending_near_end(5.0);
+        assert!(!reduce(&mut a, Action::Tick).contains(&Effect::Send(Command::PlayPrepared)));
+        assert!(a.pending_requeue);
+        let mut p = pending_near_end(0.2);
+        p.status.state = PlayerState::Paused;
+        assert!(!reduce(&mut p, Action::Tick).contains(&Effect::Send(Command::PlayPrepared)));
+        assert!(p.pending_requeue);
+    }
+
+    #[test]
+    fn n_while_pending_plays_the_prepared_list() {
+        let mut a = pending_near_end(100.0);
+        let fx = reduce(&mut a, key('n'));
+        assert!(fx.contains(&Effect::Send(Command::PlayPrepared)), "{fx:?}");
+        assert!(!fx.contains(&Effect::Send(Command::Next)));
+        assert_eq!(a.context.index, 1);
+    }
+
+    #[test]
+    fn track_change_while_pending_reprepares_from_the_new_track() {
+        let mut a = pending_near_end(100.0);
+        let fx = poll(&mut a, PlayerState::Playing, 0.5, "2");
+        assert_eq!(prepared(&fx), vec![id(3), id(1), id(2)]);
+        assert!(a.pending_requeue);
+        assert_eq!(a.context.index, 1);
+    }
+
+    #[test]
+    fn unexpected_track_while_pending_switches_immediately() {
+        let mut a = pending_near_end(100.0);
+        let fx = poll(&mut a, PlayerState::Playing, 0.5, "9");
+        assert!(fx.contains(&Effect::Send(Command::PlayPrepared)), "{fx:?}");
+        assert!(!a.pending_requeue);
+        let mut s = pending_near_end(100.0);
+        let fx = poll(&mut s, PlayerState::Stopped, 0.0, "1");
+        assert!(fx.contains(&Effect::Send(Command::PlayPrepared)), "{fx:?}");
+    }
+
+    #[test]
+    fn enter_clears_a_pending_requeue() {
+        let mut a = pending_near_end(100.0);
+        reduce(&mut a, code(KeyCode::Enter));
+        assert!(!a.pending_requeue);
+    }
+
+    #[test]
+    fn stale_poll_of_the_previous_track_after_a_switch_is_ignored() {
+        let mut a = pending_near_end(0.2);
+        reduce(&mut a, Action::Tick);
+        assert_eq!(a.status.track_id, Some(id(2)));
+        poll(&mut a, PlayerState::Playing, 199.9, "1");
+        assert_eq!(a.status.track_id, Some(id(2)));
+        assert_eq!(a.context.index, 1);
+        poll(&mut a, PlayerState::Playing, 0.3, "2");
+        assert_eq!(a.status.track_id, Some(id(2)));
     }
 }
