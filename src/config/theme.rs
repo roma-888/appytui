@@ -170,9 +170,7 @@ impl Theme {
 
     /// `~/.config/appytui/themes`, then `~/.config/cava/themes`.
     pub fn user_dirs() -> Vec<PathBuf> {
-        let Some(cfg) = dirs::config_dir() else {
-            return Vec::new();
-        };
+        let cfg = super::config_home();
         vec![
             cfg.join("appytui").join("themes"),
             cfg.join("cava").join("themes"),

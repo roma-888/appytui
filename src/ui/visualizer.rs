@@ -129,8 +129,11 @@ impl Visualizer<'_> {
         let sp = self.settings.bar_spacing;
         let n = values.len();
         let idle = self.settings.show_idle_bar_heads;
+        // Centre the group so leftover cells split evenly between both edges.
+        let used = (n as u16 * (bw + sp)).saturating_sub(sp).min(area.width);
+        let left = area.x + (area.width - used) / 2;
         for (i, &v) in values.iter().enumerate() {
-            let x0 = area.x + i as u16 * (bw + sp);
+            let x0 = left + i as u16 * (bw + sp);
             let bar_frac = if n > 1 {
                 i as f32 / (n - 1) as f32
             } else {
@@ -420,6 +423,20 @@ mod tests {
         assert_eq!(sym(&buf, 1, 0), "█");
         assert_eq!(sym(&buf, 2, 4), "█");
         assert_eq!(sym(&buf, 0, 2), "▁");
+    }
+
+    #[test]
+    fn bar_group_is_centred_when_cells_are_left_over() {
+        // 9 cells, stereo, 1-wide bars with 1 gap: 4 bars use 7 cells, 1 spare cell each side.
+        let f = Frame {
+            left: vec![1.0, 1.0],
+            right: vec![1.0, 1.0],
+            waveform: vec![],
+        };
+        let s = settings(Orientation::Bottom, Channels::Stereo);
+        let buf = render(&f, &s, 9, 1);
+        let row: Vec<&str> = (0..9).map(|x| sym(&buf, x, 0)).collect();
+        assert_eq!(row, vec![" ", "█", " ", "█", " ", "█", " ", "█", " "]);
     }
 
     #[test]
