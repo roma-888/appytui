@@ -67,6 +67,7 @@ impl Smoother {
 
 /// cava's "monstercat" filter: each bar lifts its neighbours by 1/1.5^distance
 /// (or, with `waves`, by a wider quadratic falloff).
+#[allow(clippy::needless_range_loop)] // nested index loops read clearer than iterator zips here
 pub fn monstercat(bars: &mut [f32], waves: bool) {
     let n = bars.len();
     let src = bars.to_vec();
