@@ -102,8 +102,10 @@ pub struct Analyzer {
     /// Inclusive-exclusive FFT bin ranges per bar.
     bands: Vec<(usize, usize)>,
     smooth: [Smoother; 2],
-    /// Auto-sensitivity: slowly tracked peak in dB.
-    peak_db: f32,
+    /// Auto-sensitivity multiplier (cava style): drops fast on overshoot, creeps up otherwise.
+    sens: f32,
+    /// Per-band weight: a gentle treble tilt so the spectrum is not all bass.
+    weights: Vec<f32>,
 }
 
 impl Analyzer {
@@ -123,7 +125,8 @@ impl Analyzer {
             scratch: vec![Complex::new(0.0, 0.0); FFT_SIZE],
             bands: Vec::new(),
             smooth: [Smoother::default(), Smoother::default()],
-            peak_db: -30.0,
+            sens: 0.0,
+            weights: Vec::new(),
         };
         a.set_bars(bars_per_channel);
         a
@@ -157,6 +160,15 @@ impl Analyzer {
                     b1 = b0 + 1;
                 }
                 (b0, b1)
+            })
+            .collect();
+        let bin_hz = self.sample_rate / FFT_SIZE as f32;
+        self.weights = self
+            .bands
+            .iter()
+            .map(|&(b0, b1)| {
+                let centre = (b0 + b1) as f32 * 0.5 * bin_hz;
+                (centre / 1000.0).max(0.05).powf(0.35)
             })
             .collect();
         for s in &mut self.smooth {
@@ -227,7 +239,7 @@ impl Analyzer {
         }
     }
 
-    /// Windowed FFT → mean magnitude per band, in dB.
+    /// Windowed FFT → weighted, square-root-compressed mean magnitude per band.
     fn magnitudes(&mut self, samples: &[f32]) -> Vec<f32> {
         for (i, s) in self.scratch.iter_mut().enumerate() {
             *s = Complex::new(samples[i] * self.window[i], 0.0);
@@ -235,36 +247,39 @@ impl Analyzer {
         self.fft.process(&mut self.scratch);
         self.bands
             .iter()
-            .map(|&(lo, hi)| {
+            .zip(&self.weights)
+            .map(|(&(lo, hi), w)| {
                 let sum: f32 = self.scratch[lo..hi].iter().map(|c| c.norm()).sum();
                 let mean = sum / (hi - lo) as f32 / (FFT_SIZE as f32 / 4.0);
-                20.0 * (mean + 1e-7).log10()
+                (mean * w).sqrt()
             })
             .collect()
     }
 
-    /// dB → 0..1 with auto-sensitivity, then monstercat/waves and smoothing.
-    fn finish(&mut self, ch: usize, db: Vec<f32>, noise: f32) -> Vec<f32> {
-        let max_db = db.iter().cloned().fold(f32::MIN, f32::max);
+    /// Linear magnitudes → 0..1 with auto-sensitivity, then monstercat/waves and smoothing.
+    fn finish(&mut self, ch: usize, raw: Vec<f32>, noise: f32) -> Vec<f32> {
+        let max = raw.iter().cloned().fold(0.0, f32::max);
+        // Digital silence: nothing to scale, render empty.
+        if max < 1e-4 {
+            return self.smooth[ch].apply(&vec![0.0; raw.len()], noise);
+        }
+        let user_gain = self.settings.sensitivity.max(1) as f32 / 100.0;
         if self.settings.autosens {
-            if max_db > self.peak_db {
-                self.peak_db = max_db;
+            if self.sens <= 0.0 {
+                // First audible frame: put the loudest bar at 80 %.
+                self.sens = 0.8 / max;
+            } else if max * self.sens > 1.0 {
+                // Overshoot: back off quickly so peaks are never clipped for long.
+                self.sens *= 0.95;
             } else {
-                self.peak_db = (self.peak_db - 0.1).max(-40.0);
+                // Creep up so quiet passages still fill the pane.
+                self.sens *= 1.002;
             }
         } else {
-            self.peak_db = 0.0;
+            self.sens = 1.0;
         }
-        let gain = self.settings.sensitivity.max(1) as f32 / 100.0;
-        let floor = self.peak_db - 60.0;
-        let mut bars: Vec<f32> = db
-            .iter()
-            .map(|d| (((d - floor) / 60.0) * gain).clamp(0.0, 1.0))
-            .collect();
-        // Digital silence sits at the log epsilon (-140 dB); render it as empty.
-        if max_db < -120.0 {
-            bars.iter_mut().for_each(|b| *b = 0.0);
-        }
+        let gain = self.sens * user_gain;
+        let mut bars: Vec<f32> = raw.iter().map(|v| (v * gain).clamp(0.0, 1.0)).collect();
         if self.settings.monstercat || self.settings.waves {
             monstercat(&mut bars, self.settings.waves);
         }
@@ -369,6 +384,57 @@ mod tests {
             prev = peak;
         }
         assert!(prev < 0.05);
+    }
+
+    #[test]
+    fn quieter_tone_renders_visibly_lower_than_the_loud_one() {
+        let mut a = Analyzer::new(&mono_settings(), 48000.0, 24);
+        // 200 Hz at full level plus 3 kHz at -20 dB.
+        let n = FFT_SIZE;
+        let samples: Vec<f32> = (0..n)
+            .flat_map(|i| {
+                let t = i as f32 / 48000.0;
+                let v = (2.0 * std::f32::consts::PI * 200.0 * t).sin() * 0.5
+                    + (2.0 * std::f32::consts::PI * 3000.0 * t).sin() * 0.05;
+                [v, v]
+            })
+            .collect();
+        let mut f = Frame::default();
+        for _ in 0..40 {
+            f = a.analyze(&samples);
+        }
+        let loud = f.left[a.band_for_freq(200.0).unwrap()];
+        let quiet = f.left[a.band_for_freq(3000.0).unwrap()];
+        assert!(loud > 0.6, "loud band {loud}");
+        assert!(quiet < loud * 0.7, "quiet band {quiet} vs loud {loud}");
+        assert!(quiet > 0.05, "quiet band should still be visible: {quiet}");
+        // A band with no energy at all stays near zero.
+        let empty = f.left[a.band_for_freq(900.0).unwrap()];
+        assert!(empty < 0.25, "empty band {empty}");
+    }
+
+    #[test]
+    fn autosens_recovers_after_a_loud_passage() {
+        let mut a = Analyzer::new(&mono_settings(), 48000.0, 16);
+        let loud = sine(440.0, 48000.0, FFT_SIZE);
+        let quiet: Vec<f32> = loud.iter().map(|v| v * 0.1).collect();
+        for _ in 0..20 {
+            a.analyze(&loud);
+        }
+        // Let gravity settle the bars at the quiet level before measuring.
+        let mut settled = 0.0;
+        for _ in 0..40 {
+            settled = a.analyze(&quiet).left.iter().cloned().fold(0.0, f32::max);
+        }
+        let mut later = 0.0;
+        for _ in 0..600 {
+            later = a.analyze(&quiet).left.iter().cloned().fold(0.0, f32::max);
+        }
+        assert!(
+            later > settled + 0.1,
+            "sens did not creep up: {settled} -> {later}"
+        );
+        assert!(later <= 1.0);
     }
 
     #[test]
