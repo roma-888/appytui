@@ -69,6 +69,9 @@ pub const OWN_PLAYLIST: &str = "appytui";
 // the only way to make it continue (and shuffle) within a list, and a playlist
 // always starts from its first track, so the caller puts the chosen track first.
 // `Music.delete(pl.tracks)` empties the playlist without touching the library.
+// Every Apple Event costs ~17 ms, so the loop sends exactly one per track: the
+// `whose` specifier is built locally and a missing track makes `duplicate`
+// throw, which is cheaper than asking `exists()` first.
 const PLAY_TRACKS: &str = r#"
 let pl = Music.userPlaylists.whose({ name: ARGS.name })[0];
 if (!pl.exists()) {
@@ -76,8 +79,7 @@ if (!pl.exists()) {
 }
 Music.delete(pl.tracks);
 for (const id of ARGS.tracks) {
-  const t = lib.tracks.whose({ persistentID: id })[0];
-  if (t.exists()) { Music.duplicate(t, { to: pl }); }
+  try { Music.duplicate(lib.tracks.whose({ persistentID: id })[0], { to: pl }); } catch (e) {}
 }
 pl.play();
 "ok";

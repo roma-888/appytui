@@ -145,7 +145,11 @@ and a playlist always starts from its first track. Every play therefore goes
 through `play_tracks`, which finds or creates a user playlist named `appytui`,
 empties it with `delete pl.tracks` (which does not touch the library), copies
 the given tracks into it in order with `duplicate`, and plays the playlist.
-Copying costs about 17 ms per track. The `appytui` playlist is skipped by
+Every Apple Event costs about 17 ms (Music.app services one per display
+frame), so the loop sends one per track and lets a missing track throw rather
+than checking `exists()` first. Music.app snapshots the queue when the
+playlist starts, so tracks appended afterwards are not played; the whole list
+must be in place before `play`. The `appytui` playlist is skipped by
 `load_playlists`.
 
 ## 6. App state and reducer
@@ -179,9 +183,10 @@ index of the current track. Playing a track from an album, artist, playlist
 or the queue rotates that list so the chosen track comes first and sends it
 whole through `play_tracks`; Music.app plays the rest and wraps to the tracks
 before the chosen one. Songs and Search are long, so they send a window of
-`WINDOW` (50) tracks: the chosen one and the next 49, or with shuffle on the
-chosen one plus 49 sampled at random from the visible list so shuffle spans
-the whole list. `a` plays the list under the cursor from its first track: the
+`WINDOW` (25) tracks: the chosen one and the next 24, or with shuffle on the
+chosen one plus 24 sampled at random from the visible list so shuffle spans
+the whole list. The chosen track is shown as playing immediately; the next
+status poll corrects it if Music.app disagrees. `a` plays the list under the cursor from its first track: the
 collection itself on an album, artist or playlist row, otherwise the visible
 list. On each status event the index is re-synced by locating the reported
 track ID in the context (nearest occurrence after the old index, else first).

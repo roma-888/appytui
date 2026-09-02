@@ -65,5 +65,5 @@ Set it to `kitty`, `sixel`, `iterm2` or `halfblocks` to force one.
 - A playlist named `appytui` appears in Music.app. Playing anything copies the tracks
   into it so Music.app keeps playing (and shuffles) within that list; it is hidden from
   the Playlists tab. Albums, artists and playlists are sent whole. Songs and Search send
-  the next 50 tracks, or with shuffle on the chosen track plus 49 picked at random from
-  the list, so starting playback takes up to about a second.
+  the next 25 tracks, or with shuffle on the chosen track plus 24 picked at random from
+  the list. Copying costs about 17 ms per track, so a long artist takes a moment to start.

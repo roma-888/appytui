@@ -33,9 +33,10 @@ pub enum Effect {
 }
 
 /// How many tracks of a long list (Songs, Search) are sent to Music.app at
-/// once. Copying a track into the playlist costs about 17 ms, so this bounds
-/// the delay before playback starts.
-pub const WINDOW: usize = 50;
+/// once. Copying a track into the playlist costs about 17 ms (one Apple Event
+/// per track, serviced once per display frame), so this bounds the delay
+/// before playback starts.
+pub const WINDOW: usize = 25;
 
 pub fn reduce(app: &mut App, action: Action) -> Vec<Effect> {
     match action {
@@ -377,6 +378,20 @@ fn play_list(app: &mut App, list: Vec<TrackId>, index: usize) -> Vec<Effect> {
     };
     app.context = PlayContext::new(ids.clone(), 0);
     app.invalidate_rows();
+    // Filling the playlist takes up to a second; show the chosen track now and
+    // let the next status poll correct anything.
+    let first = ids[0].clone();
+    let name = app
+        .library
+        .as_ref()
+        .and_then(|l| l.get(&first))
+        .map(|t| t.name.clone())
+        .unwrap_or_default();
+    app.status.track_id = Some(first);
+    app.status.state = PlayerState::Playing;
+    app.status.position_secs = 0.0;
+    app.status_at = Instant::now();
+    app.notify(format!("Starting {name}…"));
     vec![Effect::Send(Command::PlayTracks(ids))]
 }
 
@@ -492,13 +507,33 @@ mod tests {
     }
 
     #[test]
+    fn enter_shows_the_chosen_track_as_playing_before_music_confirms() {
+        let mut a = app();
+        reduce(&mut a, key('j'));
+        reduce(&mut a, code(KeyCode::Enter));
+        assert_eq!(a.status.track_id, Some(id(2)));
+        assert_eq!(a.status.state, PlayerState::Playing);
+        assert_eq!(a.current_track().map(|t| t.name.as_str()), Some("Beta"));
+        assert!(a.position_now() < 1.0);
+        let msg = a
+            .message
+            .as_ref()
+            .map(|(m, _)| m.clone())
+            .unwrap_or_default();
+        assert!(
+            msg.contains("Beta"),
+            "status message should name the track, got {msg:?}"
+        );
+    }
+
+    #[test]
     fn enter_on_song_sends_at_most_the_window() {
         let mut a = big_app();
         for _ in 0..5 {
             reduce(&mut a, key('j'));
         }
         let fx = reduce(&mut a, code(KeyCode::Enter));
-        let want: Vec<TrackId> = (5..55).map(id).collect();
+        let want: Vec<TrackId> = (5..30).map(id).collect();
         assert_eq!(sent_tracks(&fx), want);
     }
 
@@ -510,13 +545,13 @@ mod tests {
             reduce(&mut a, key('j'));
         }
         let sent = sent_tracks(&reduce(&mut a, code(KeyCode::Enter)));
-        assert_eq!(sent.len(), 50);
+        assert_eq!(sent.len(), 25);
         assert_eq!(sent[0], id(5));
         let mut uniq: Vec<&str> = sent.iter().map(|t| t.0.as_str()).collect();
         uniq.sort_unstable();
         uniq.dedup();
-        assert_eq!(uniq.len(), 50, "no repeats");
-        let sequential: Vec<TrackId> = (5..55).map(id).collect();
+        assert_eq!(uniq.len(), 25, "no repeats");
+        let sequential: Vec<TrackId> = (5..30).map(id).collect();
         assert_ne!(
             sent, sequential,
             "shuffle should not send the sequential window"
@@ -574,7 +609,7 @@ mod tests {
             vec![id(1), id(2), id(3)]
         );
         let mut big = big_app();
-        assert_eq!(sent_tracks(&reduce(&mut big, key('a'))).len(), 50);
+        assert_eq!(sent_tracks(&reduce(&mut big, key('a'))).len(), 25);
     }
 
     #[test]
