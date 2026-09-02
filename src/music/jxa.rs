@@ -60,11 +60,6 @@ JSON.stringify({ state: st, track_id, track, position_secs: Music.playerPosition
   volume: Music.soundVolume(), shuffle: Music.shuffleEnabled(), repeat: Music.songRepeat() });
 "#;
 
-const PLAY_TRACK: &str = r#"
-lib.tracks.whose({ persistentID: ARGS.track })[0].play();
-"ok";
-"#;
-
 /// Name of the playlist appytui owns for album, artist and playlist playback.
 /// It is hidden from the Playlists tab.
 pub const OWN_PLAYLIST: &str = "appytui";
@@ -207,10 +202,6 @@ impl MusicBridge for JxaBridge {
             .next()
             .and_then(|l| l.trim().parse().ok())
             .context("Music.app is not running")
-    }
-    fn play_track(&mut self, track: &TrackId) -> Result<()> {
-        self.run(PLAY_TRACK, json!({ "track": track.0 }))
-            .map(|_| ())
     }
     fn play_tracks(&mut self, tracks: &[TrackId]) -> Result<()> {
         let ids: Vec<&str> = tracks.iter().map(|t| t.0.as_str()).collect();

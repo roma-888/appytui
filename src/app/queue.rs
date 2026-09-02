@@ -1,22 +1,17 @@
 //! The app-side play context. Music.app does not expose Up Next over
 //! AppleScript, so the queue is derived from the list the user played from.
 
-use crate::music::model::{PlaySource, TrackId};
+use crate::music::model::TrackId;
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct PlayContext {
     pub track_ids: Vec<TrackId>,
     pub index: usize,
-    pub source: PlaySource,
 }
 
 impl PlayContext {
-    pub fn new(track_ids: Vec<TrackId>, index: usize, source: PlaySource) -> Self {
-        Self {
-            track_ids,
-            index,
-            source,
-        }
+    pub fn new(track_ids: Vec<TrackId>, index: usize) -> Self {
+        Self { track_ids, index }
     }
 
     /// Point `index` at `id`: the nearest occurrence at or after the current
@@ -47,7 +42,7 @@ mod tests {
 
     #[test]
     fn resync_prefers_next_occurrence() {
-        let mut c = PlayContext::new(ids(&["a", "b", "a", "c"]), 1, PlaySource::Library);
+        let mut c = PlayContext::new(ids(&["a", "b", "a", "c"]), 1);
         c.resync(&TrackId("a".into()));
         assert_eq!(c.index, 2);
         c.resync(&TrackId("b".into()));
@@ -58,9 +53,9 @@ mod tests {
 
     #[test]
     fn upcoming_is_after_current() {
-        let c = PlayContext::new(ids(&["a", "b", "c"]), 0, PlaySource::Library);
+        let c = PlayContext::new(ids(&["a", "b", "c"]), 0);
         assert_eq!(c.upcoming(), &ids(&["b", "c"])[..]);
-        let end = PlayContext::new(ids(&["a"]), 0, PlaySource::Library);
+        let end = PlayContext::new(ids(&["a"]), 0);
         assert!(end.upcoming().is_empty());
         assert!(PlayContext::default().upcoming().is_empty());
     }

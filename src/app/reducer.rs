@@ -10,7 +10,7 @@ use super::views::{Drill, Row, Tab};
 use super::{App, MESSAGE_TTL, OPTIMISTIC_WINDOW};
 use crate::art::{ArtRequest, ArtResult};
 use crate::config::Orientation;
-use crate::music::model::{PlaySource, PlayerState, TrackId};
+use crate::music::model::{PlayerState, TrackId};
 use crate::music::{Command, Event};
 use crate::viz::{Control, VizEvent};
 
@@ -31,6 +31,11 @@ pub enum Effect {
     LookupArt(ArtRequest),
     Quit,
 }
+
+/// How many tracks of a long list (Songs, Search) are sent to Music.app at
+/// once. Copying a track into the playlist costs about 17 ms, so this bounds
+/// the delay before playback starts.
+pub const WINDOW: usize = 50;
 
 pub fn reduce(app: &mut App, action: Action) -> Vec<Effect> {
     match action {
@@ -178,6 +183,7 @@ fn on_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Char('g') | KeyCode::Home => app.view_mut().move_cursor(isize::MIN / 2, len),
         KeyCode::Char('G') | KeyCode::End => app.view_mut().move_cursor(isize::MAX / 2, len),
         KeyCode::Enter => return on_enter(app),
+        KeyCode::Char('a') => return play_all(app),
         KeyCode::Backspace => {
             let view = app.view_mut();
             if view.drill != Drill::Top {
@@ -293,44 +299,85 @@ fn on_enter(app: &mut App) -> Vec<Effect> {
                 return Vec::new();
             };
             let track_id = lib.tracks[i].id.clone();
-            let (ids, source) = if app.tab == Tab::Queue {
-                (app.context.track_ids.clone(), app.context.source)
+            let list = if app.tab == Tab::Queue {
+                app.context.track_ids.clone()
             } else {
-                let ids: Vec<TrackId> = rows
-                    .iter()
-                    .filter_map(|r| match r {
-                        Row::Track(j) => Some(lib.tracks[*j].id.clone()),
-                        _ => None,
-                    })
-                    .collect();
-                // Music.app keeps playing within a list only if it is a
-                // playlist, so albums, artists and playlists go through appytui's own.
-                let source = match (app.tab, app.view().drill) {
-                    (Tab::Albums, Drill::Album(_))
-                    | (Tab::Artists, Drill::Artist(_))
-                    | (Tab::Playlists, Drill::Playlist(_)) => PlaySource::OwnPlaylist,
-                    _ => PlaySource::Library,
-                };
-                (ids, source)
+                track_ids(lib, &rows)
             };
-            let index = ids.iter().position(|id| *id == track_id).unwrap_or(0);
-            app.invalidate_rows();
-            match source {
-                PlaySource::Library => {
-                    app.context = PlayContext::new(ids, index, source);
-                    vec![Effect::Send(Command::PlayTrack(track_id))]
-                }
-                PlaySource::OwnPlaylist => {
-                    // A playlist always starts at its first track, so rotate
-                    // the list to begin at the chosen one.
-                    let mut ids = ids;
-                    ids.rotate_left(index);
-                    app.context = PlayContext::new(ids.clone(), 0, source);
-                    vec![Effect::Send(Command::PlayTracks(ids))]
-                }
-            }
+            let index = list.iter().position(|id| *id == track_id).unwrap_or(0);
+            play_list(app, list, index)
         }
     }
+}
+
+/// `a`: play the list under the cursor from its first track. On an album,
+/// artist or playlist row that is the collection itself; anywhere else it is
+/// the visible list.
+fn play_all(app: &mut App) -> Vec<Effect> {
+    let rows = app.rows(app.tab);
+    let Some(lib) = app.library.as_ref() else {
+        return Vec::new();
+    };
+    let by_index =
+        |idx: &[usize]| -> Vec<TrackId> { idx.iter().map(|&i| lib.tracks[i].id.clone()).collect() };
+    let list = match rows.get(app.view().cursor) {
+        Some(Row::Album(a)) => by_index(&lib.albums[*a].tracks),
+        Some(Row::Artist(a)) => by_index(&lib.artists[*a].tracks),
+        Some(Row::Playlist(p)) => app.playlists[*p]
+            .track_ids
+            .iter()
+            .filter(|id| lib.index_of(id).is_some())
+            .cloned()
+            .collect(),
+        _ => track_ids(lib, &rows),
+    };
+    play_list(app, list, 0)
+}
+
+fn track_ids(lib: &Library, rows: &[Row]) -> Vec<TrackId> {
+    rows.iter()
+        .filter_map(|r| match r {
+            Row::Track(j) => Some(lib.tracks[*j].id.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Start `list` at `index` through appytui's playlist, which always plays from
+/// its first track. Albums, artists, playlists and the queue are sent whole,
+/// rotated so the chosen track is first and the earlier ones follow at the end.
+/// Songs and Search are long, so only a window is sent: the next `WINDOW`
+/// tracks, or with shuffle on the chosen track plus a random sample of the
+/// rest so shuffle still spans the whole list.
+fn play_list(app: &mut App, list: Vec<TrackId>, index: usize) -> Vec<Effect> {
+    if list.is_empty() {
+        return Vec::new();
+    }
+    let index = index.min(list.len() - 1);
+    let ids: Vec<TrackId> = if matches!(app.tab, Tab::Songs | Tab::Search) {
+        if app.status.shuffle {
+            let mut others: Vec<usize> = (0..list.len()).filter(|&i| i != index).collect();
+            let take = others.len().min(WINDOW - 1);
+            // Partial Fisher-Yates: the first `take` entries become the sample.
+            for i in 0..take {
+                let j = i + (app.random() as usize) % (others.len() - i);
+                others.swap(i, j);
+            }
+            std::iter::once(index)
+                .chain(others[..take].iter().copied())
+                .map(|i| list[i].clone())
+                .collect()
+        } else {
+            list[index..(index + WINDOW).min(list.len())].to_vec()
+        }
+    } else {
+        let mut ids = list;
+        ids.rotate_left(index);
+        ids
+    };
+    app.context = PlayContext::new(ids.clone(), 0);
+    app.invalidate_rows();
+    vec![Effect::Send(Command::PlayTracks(ids))]
 }
 
 fn drill(app: &mut App, into: Drill) -> Vec<Effect> {
@@ -378,6 +425,31 @@ mod tests {
         app
     }
 
+    /// Sixty tracks named T00..T59 so library order matches id order.
+    fn big_app() -> App {
+        let mut app = App::new(
+            Theme::builtin("terminal").unwrap(),
+            VizSettings::default(),
+            false,
+        );
+        let tracks = (0..60)
+            .map(|i| track(&format!("{i}"), &format!("T{i:02}"), "Ann", "Big"))
+            .collect();
+        reduce(&mut app, Action::Bridge(Event::Library(tracks)));
+        app
+    }
+
+    fn sent_tracks(fx: &[Effect]) -> Vec<TrackId> {
+        match fx {
+            [Effect::Send(Command::PlayTracks(ids))] => ids.clone(),
+            other => panic!("expected one PlayTracks, got {other:?}"),
+        }
+    }
+
+    fn id(n: usize) -> TrackId {
+        TrackId(n.to_string())
+    }
+
     fn key(c: char) -> Action {
         Action::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
     }
@@ -410,17 +482,106 @@ mod tests {
     }
 
     #[test]
-    fn enter_on_song_plays_with_list_context() {
+    fn enter_on_song_plays_onward_from_that_row() {
         let mut a = app();
         reduce(&mut a, key('j'));
         let fx = reduce(&mut a, code(KeyCode::Enter));
-        assert_eq!(
-            fx,
-            vec![Effect::Send(Command::PlayTrack(TrackId("2".into())))]
+        assert_eq!(sent_tracks(&fx), vec![id(2), id(3)]);
+        assert_eq!(a.context.track_ids, vec![id(2), id(3)]);
+        assert_eq!(a.context.index, 0);
+    }
+
+    #[test]
+    fn enter_on_song_sends_at_most_the_window() {
+        let mut a = big_app();
+        for _ in 0..5 {
+            reduce(&mut a, key('j'));
+        }
+        let fx = reduce(&mut a, code(KeyCode::Enter));
+        let want: Vec<TrackId> = (5..55).map(id).collect();
+        assert_eq!(sent_tracks(&fx), want);
+    }
+
+    #[test]
+    fn enter_on_song_with_shuffle_samples_the_list_after_the_chosen_track() {
+        let mut a = big_app();
+        a.status.shuffle = true;
+        for _ in 0..5 {
+            reduce(&mut a, key('j'));
+        }
+        let sent = sent_tracks(&reduce(&mut a, code(KeyCode::Enter)));
+        assert_eq!(sent.len(), 50);
+        assert_eq!(sent[0], id(5));
+        let mut uniq: Vec<&str> = sent.iter().map(|t| t.0.as_str()).collect();
+        uniq.sort_unstable();
+        uniq.dedup();
+        assert_eq!(uniq.len(), 50, "no repeats");
+        let sequential: Vec<TrackId> = (5..55).map(id).collect();
+        assert_ne!(
+            sent, sequential,
+            "shuffle should not send the sequential window"
         );
-        assert_eq!(a.context.index, 1);
-        assert_eq!(a.context.track_ids.len(), 3);
-        assert_eq!(a.context.source, PlaySource::Library);
+        assert!(sent.iter().all(|t| t.0.parse::<usize>().unwrap() < 60));
+    }
+
+    #[test]
+    fn enter_on_search_result_plays_onward_through_the_results() {
+        let mut a = app();
+        reduce(&mut a, key('5'));
+        for c in "ann".chars() {
+            reduce(&mut a, key(c));
+        }
+        let fx = reduce(&mut a, code(KeyCode::Enter));
+        let sent = sent_tracks(&fx);
+        assert_eq!(sent.len(), 2);
+        assert!(sent.contains(&id(1)) && sent.contains(&id(2)));
+    }
+
+    #[test]
+    fn a_plays_the_selected_album_from_the_top() {
+        let mut a = app();
+        reduce(&mut a, key('2'));
+        assert_eq!(sent_tracks(&reduce(&mut a, key('a'))), vec![id(1), id(2)]);
+        assert_eq!(a.context.track_ids, vec![id(1), id(2)]);
+        assert_eq!(a.context.index, 0);
+        assert_eq!(a.view().drill, Drill::Top);
+    }
+
+    #[test]
+    fn a_plays_the_selected_artist_and_playlist() {
+        let mut a = app();
+        reduce(&mut a, key('3'));
+        assert_eq!(sent_tracks(&reduce(&mut a, key('a'))), vec![id(1), id(2)]);
+        reduce(&mut a, key('4'));
+        assert_eq!(sent_tracks(&reduce(&mut a, key('a'))), vec![id(3), id(1)]);
+    }
+
+    #[test]
+    fn a_inside_a_drill_plays_that_list_from_the_top() {
+        let mut a = app();
+        reduce(&mut a, key('2'));
+        reduce(&mut a, code(KeyCode::Enter));
+        reduce(&mut a, key('j'));
+        assert_eq!(sent_tracks(&reduce(&mut a, key('a'))), vec![id(1), id(2)]);
+    }
+
+    #[test]
+    fn a_on_songs_plays_the_list_from_the_top() {
+        let mut a = app();
+        reduce(&mut a, key('G'));
+        assert_eq!(
+            sent_tracks(&reduce(&mut a, key('a'))),
+            vec![id(1), id(2), id(3)]
+        );
+        let mut big = big_app();
+        assert_eq!(sent_tracks(&reduce(&mut big, key('a'))).len(), 50);
+    }
+
+    #[test]
+    fn a_with_nothing_listed_does_nothing() {
+        let mut a = app();
+        reduce(&mut a, key('5'));
+        assert_eq!(reduce(&mut a, key('a')), Vec::new());
     }
 
     #[test]
@@ -444,7 +605,6 @@ mod tests {
         let fx = reduce(&mut a, code(KeyCode::Enter));
         let ids = vec![TrackId("3".into()), TrackId("1".into())];
         assert_eq!(fx, vec![Effect::Send(Command::PlayTracks(ids.clone()))]);
-        assert_eq!(a.context.source, PlaySource::OwnPlaylist);
         assert_eq!(a.context.track_ids, ids);
         reduce(&mut a, key('6'));
         assert_eq!(a.rows(Tab::Queue), vec![Row::Track(0)]);
@@ -460,7 +620,6 @@ mod tests {
         // Album A is [1, 2]; picking 2 rotates it so 2 plays first, then 1.
         let ids = vec![TrackId("2".into()), TrackId("1".into())];
         assert_eq!(fx, vec![Effect::Send(Command::PlayTracks(ids.clone()))]);
-        assert_eq!(a.context.source, PlaySource::OwnPlaylist);
         assert_eq!(a.context.track_ids, ids);
         assert_eq!(a.context.index, 0);
     }
@@ -483,16 +642,14 @@ mod tests {
     }
 
     #[test]
-    fn playing_from_queue_of_a_library_context_plays_the_single_track() {
+    fn playing_from_queue_after_songs_restarts_the_window_at_that_track() {
         let mut a = app();
         reduce(&mut a, code(KeyCode::Enter));
         reduce(&mut a, key('6'));
+        assert_eq!(a.rows(Tab::Queue), vec![Row::Track(1), Row::Track(2)]);
         let fx = reduce(&mut a, code(KeyCode::Enter));
-        assert_eq!(
-            fx,
-            vec![Effect::Send(Command::PlayTrack(TrackId("2".into())))]
-        );
-        assert_eq!(a.context.index, 1);
+        assert_eq!(sent_tracks(&fx), vec![id(2), id(3), id(1)]);
+        assert_eq!(a.context.index, 0);
     }
 
     #[test]

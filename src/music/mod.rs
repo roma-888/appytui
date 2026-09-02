@@ -17,8 +17,6 @@ pub trait MusicBridge: Send {
     fn load_playlists(&mut self) -> Result<Vec<Playlist>>;
     fn status(&mut self) -> Result<PlayerStatus>;
     fn music_pid(&mut self) -> Result<u32>;
-    /// Play one library track; Music.app decides what follows.
-    fn play_track(&mut self, track: &TrackId) -> Result<()>;
     /// Play `tracks` in order, starting with the first, as one playlist.
     fn play_tracks(&mut self, tracks: &[TrackId]) -> Result<()>;
     fn play_pause(&mut self) -> Result<()>;
@@ -35,7 +33,6 @@ pub trait MusicBridge: Send {
 pub enum Command {
     LoadLibrary,
     LoadPlaylists,
-    PlayTrack(TrackId),
     PlayTracks(Vec<TrackId>),
     PlayPause,
     Next,

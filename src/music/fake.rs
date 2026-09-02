@@ -68,11 +68,6 @@ impl MusicBridge for FakeBridge {
     fn music_pid(&mut self) -> Result<u32> {
         Ok(4242)
     }
-    fn play_track(&mut self, track: &TrackId) -> Result<()> {
-        self.calls.push(format!("play_track {}", track.0));
-        self.start(track);
-        Ok(())
-    }
     fn play_tracks(&mut self, tracks: &[TrackId]) -> Result<()> {
         let ids: Vec<&str> = tracks.iter().map(|t| t.0.as_str()).collect();
         self.calls.push(format!("play_tracks [{}]", ids.join(",")));
@@ -126,15 +121,11 @@ mod tests {
     #[test]
     fn fake_records_calls_and_updates_status() {
         let mut b = FakeBridge::with_tracks(vec![track("A", "Song", "Artist", "Album")]);
-        b.play_track(&TrackId("A".into())).unwrap();
         b.play_tracks(&[TrackId("B".into()), TrackId("A".into())])
             .unwrap();
         assert_eq!(b.status().unwrap().track_id, Some(TrackId("B".into())));
         b.play_pause().unwrap();
-        assert_eq!(
-            b.calls,
-            vec!["play_track A", "play_tracks [B,A]", "play_pause"]
-        );
+        assert_eq!(b.calls, vec!["play_tracks [B,A]", "play_pause"]);
         assert_eq!(b.status().unwrap().state, PlayerState::Paused);
     }
 }

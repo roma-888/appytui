@@ -59,6 +59,8 @@ pub struct App {
     /// fuzzy matcher over the whole library on every animation frame.
     rows_cache: Option<(RowsKey, Vec<Row>)>,
     rows_gen: u64,
+    /// xorshift state for shuffle sampling; avoids a dependency for one use.
+    rng: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -99,7 +101,22 @@ impl App {
             filter: Filter::new(),
             rows_cache: None,
             rows_gen: 0,
+            rng: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as u64)
+                .unwrap_or(0)
+                | 1,
         }
+    }
+
+    /// Next pseudo-random number (xorshift64*).
+    pub fn random(&mut self) -> u64 {
+        let mut x = self.rng;
+        x ^= x >> 12;
+        x ^= x << 25;
+        x ^= x >> 27;
+        self.rng = x;
+        x.wrapping_mul(0x2545_F491_4F6C_DD1D)
     }
 
     pub fn view(&self) -> &TabView {

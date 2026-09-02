@@ -36,6 +36,7 @@ app, not to appytui. If you decline audio recording the visualizer runs simulate
 | 1–6 / Tab | switch tab |
 | j/k ↓/↑, g/G, Ctrl-d/u | move |
 | Enter / Backspace | play or open / back |
+| a | play the list, album, artist or playlist under the cursor from the top |
 | Space, n, p | pause, next, previous |
 | ← / → | seek 5 s |
 | + / - | volume |
@@ -61,7 +62,8 @@ Set it to `kitty`, `sixel`, `iterm2` or `halfblocks` to force one.
 - AirPlay output: the tap listens to the Mac's default output device, so streaming to
   AirPlay speakers shows a quiet visualizer.
 - Library only: no Apple Music catalog search.
-- A playlist named `appytui` appears in Music.app. Playing from an album, artist or
-  playlist copies those tracks into it so Music.app keeps playing (and shuffles) within
-  that list; it is hidden from the Playlists tab. Songs and Search play a single track,
-  after which Music.app's Autoplay takes over, as when playing a track by script.
+- A playlist named `appytui` appears in Music.app. Playing anything copies the tracks
+  into it so Music.app keeps playing (and shuffles) within that list; it is hidden from
+  the Playlists tab. Albums, artists and playlists are sent whole. Songs and Search send
+  the next 50 tracks, or with shuffle on the chosen track plus 49 picked at random from
+  the list, so starting playback takes up to about a second.
