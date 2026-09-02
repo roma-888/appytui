@@ -36,7 +36,8 @@ Out of scope for v1:
 - Rust 2021 edition, stable toolchain (1.96 available).
 - Crates: `ratatui` 0.30, `crossterm` 0.29, `cidre` 0.24 (`core_audio` feature
   only, `macos_14_2`), `rustfft` 6, `serde` + `serde_json`, `image` (JPEG decode),
-  `ureq` (album art HTTP), `nucleo-matcher` (fuzzy filter), `anyhow`, `thiserror`.
+  `ureq` (album art HTTP), `nucleo-matcher` (fuzzy filter), `crossbeam-channel`,
+  `anyhow`, `thiserror`.
 - Music.app is driven with JavaScript for Automation (JXA) through `osascript`.
   Every call returns JSON on stdout.
 
@@ -189,7 +190,7 @@ cycles visualizer on and off. `--no-viz` skips the tap entirely.
 Music.app does not expose artwork for streamed tracks. On track change the art
 worker queries Apple's public iTunes Search endpoint with the artist and title,
 takes the first song result's 100 px cover URL, downloads it, and caches the
-JPEG under `~/Library/Caches/appytui/art/<sha1 of artist|album>.jpg`. Cache hits
+JPEG under `~/Library/Caches/appytui/art/<hash of artist|album>.jpg`. Cache hits
 skip the network. The image is decoded and resampled to the panel size and
 rendered as `▄` cells with two vertical pixels per cell (top pixel background,
 bottom pixel foreground). Any failure leaves the panel showing metadata only.
