@@ -125,6 +125,13 @@ fn run(args: cli::Args) -> Result<()> {
         if let Some(p) = forced {
             picker.set_protocol_type(p);
         }
+        let fs = picker.font_size();
+        app.notify(format!(
+            "album art: {:?} ({}x{} px cells)",
+            picker.protocol_type(),
+            fs.width,
+            fs.height
+        ));
         app.picker = picker;
     }
     let mut terminal = ratatui::init();
