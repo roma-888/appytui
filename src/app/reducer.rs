@@ -109,26 +109,7 @@ fn on_bridge(app: &mut App, ev: Event) -> Vec<Effect> {
             if playing != was_playing {
                 effects.push(Effect::Viz(Control::Playing(playing)));
             }
-            match app.current_track().cloned() {
-                Some(track) if app.art_enabled => {
-                    let key = crate::art::cache_key(&track.artist, &track.album);
-                    if app.art_key.as_deref() != Some(key.as_str()) {
-                        app.art_key = Some(key.clone());
-                        app.art = None;
-                        effects.push(Effect::LookupArt(ArtRequest {
-                            key,
-                            artist: track.artist,
-                            album: track.album,
-                            name: track.name,
-                        }));
-                    }
-                }
-                Some(_) => {}
-                None => {
-                    app.art = None;
-                    app.art_key = None;
-                }
-            }
+            effects.extend(art_for_current_track(app));
             return effects;
         }
         Event::MusicPid(pid) => {
@@ -138,6 +119,33 @@ fn on_bridge(app: &mut App, ev: Event) -> Vec<Effect> {
         Event::Error(e) => app.notify(e),
     }
     Vec::new()
+}
+
+/// Request album art when the current track's album differs from the one
+/// shown, and clear the art when nothing is playing.
+fn art_for_current_track(app: &mut App) -> Option<Effect> {
+    match app.current_track().cloned() {
+        Some(track) if app.art_enabled => {
+            let key = crate::art::cache_key(&track.artist, &track.album);
+            if app.art_key.as_deref() == Some(key.as_str()) {
+                return None;
+            }
+            app.art_key = Some(key.clone());
+            app.art = None;
+            Some(Effect::LookupArt(ArtRequest {
+                key,
+                artist: track.artist,
+                album: track.album,
+                name: track.name,
+            }))
+        }
+        Some(_) => None,
+        None => {
+            app.art = None;
+            app.art_key = None;
+            None
+        }
+    }
 }
 
 fn on_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
@@ -392,7 +400,9 @@ fn play_list(app: &mut App, list: Vec<TrackId>, index: usize) -> Vec<Effect> {
     app.status.position_secs = 0.0;
     app.status_at = Instant::now();
     app.notify(format!("Starting {name}…"));
-    vec![Effect::Send(Command::PlayTracks(ids))]
+    let mut effects = vec![Effect::Send(Command::PlayTracks(ids))];
+    effects.extend(art_for_current_track(app));
+    effects
 }
 
 fn drill(app: &mut App, into: Drill) -> Vec<Effect> {
@@ -833,6 +843,30 @@ mod tests {
             })),
         );
         assert!(fx.is_empty());
+    }
+
+    #[test]
+    fn enter_requests_art_for_the_chosen_track_immediately() {
+        let mut a = app();
+        a.art_enabled = true;
+        reduce(&mut a, key('j'));
+        let fx = reduce(&mut a, code(KeyCode::Enter));
+        assert!(fx.contains(&Effect::LookupArt(ArtRequest {
+            key: crate::art::cache_key("Ann", "Album A"),
+            artist: "Ann".into(),
+            album: "Album A".into(),
+            name: "Beta".into(),
+        })));
+        // Music.app confirming the same track must not request it again.
+        let fx = reduce(
+            &mut a,
+            Action::Bridge(Event::Status(PlayerStatus {
+                state: PlayerState::Playing,
+                track_id: Some(id(2)),
+                ..PlayerStatus::default()
+            })),
+        );
+        assert!(!fx.iter().any(|e| matches!(e, Effect::LookupArt(_))));
     }
 
     #[test]

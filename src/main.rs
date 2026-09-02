@@ -58,7 +58,7 @@ fn run(args: cli::Args) -> Result<()> {
     }
     let art_enabled = config.art.enabled && !args.no_art;
 
-    let bridge = JxaBridge::new();
+    let mut bridge = JxaBridge::new();
     bridge.ensure_running().context(
         "cannot control Music.app. Allow automation for your terminal in System Settings > Privacy & Security > Automation",
     )?;

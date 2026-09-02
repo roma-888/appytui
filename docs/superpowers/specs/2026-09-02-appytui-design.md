@@ -43,11 +43,13 @@ Out of scope for v1:
   only, `macos_14_2`), `rustfft` 6, `serde` + `serde_json`, `image` (JPEG decode),
   `ureq` (album art HTTP), `nucleo-matcher` (fuzzy filter), `crossbeam-channel`,
   `toml` + `serde` for config, `dirs` for config and cache paths, `anyhow`, `thiserror`.
-- Music.app is driven with JavaScript for Automation (JXA) through `osascript`.
-  Every call returns JSON on stdout.
+- Music.app is driven with JavaScript for Automation (JXA) through one
+  long-lived `osascript` process. Every call returns JSON.
 
-Measured on this machine: one `osascript` round trip is about 140 ms; a JXA dump
-of the full 6,474-track library with five fields takes about 0.3 s. The tap
+Measured on this machine: spawning `osascript` costs about 100 ms, so it is
+spawned once; each Apple Event Music.app answers costs about 17 ms (one per
+display frame), so a warm status call is about 50 ms. A JXA dump of the full
+6,474-track library with five fields takes about 0.3 s. The tap
 delivers 48 kHz stereo `f32` at about 86 callbacks per second.
 
 ## 4. Architecture
@@ -89,8 +91,8 @@ Threads:
 - Main thread: crossterm events, a 1 Hz tick, and one `crossbeam-channel`
   select over the bridge, visualizer, and art result channels. Redraws only
   when something changed or the visualizer produced a frame.
-- Bridge worker: consumes `music::Command`, runs `osascript`, sends
-  `music::Event`. Commands are serialized so the UI never blocks on AppleScript.
+- Bridge worker: consumes `music::Command`, sends scripts to the osascript
+  server, sends `music::Event`. Commands are serialized so the UI never blocks on AppleScript.
 - Audio callback (Core Audio real-time thread): copies samples into a lock-free
   ring buffer. No allocation, no locks.
 - Spectrum thread: at 30 fps reads the latest window from the ring buffer,
@@ -125,9 +127,15 @@ Model:
   position_secs: f64, volume: u8, shuffle: bool, repeat: Off | One | All }`
 
 The JXA bridge launches Music.app if it is not running. Each method is one
-script; the runner passes arguments as JSON via an environment variable, never
-by string interpolation into the script. Every `osascript` call has a 5 second
-timeout; a timeout is reported like any other error. The bridge worker polls
+script. The bridge starts a single `osascript` running a small server script
+that reads JSON lines (`{id, script, args}`) from stdin, evaluates each script
+with `Music`, `lib` and `ARGS` in scope (re-resolving `Music` per request so a
+relaunched Music.app is picked up), and writes one JSON line back with the
+result or the error text. Arguments travel as JSON, never by string
+interpolation into the script. Every call has a 5 second timeout (60 s for the
+playlist dump and the playlist fill); on a timeout or a dead process the
+server is killed and respawned on the next call, and the failure is reported
+like any other error. The bridge worker polls
 `status()` once per second, re-polls immediately after any command, and only
 emits an event when the status changed. It also reports Music.app's PID for
 the visualizer tap.

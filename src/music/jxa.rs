@@ -1,12 +1,17 @@
-//! Real bridge: JavaScript for Automation scripts run through `osascript`.
-//! Arguments travel in the APPYTUI_ARGS environment variable as JSON, never by
-//! string interpolation into the script.
+//! Real bridge: JavaScript for Automation scripts evaluated by one long-lived
+//! `osascript` process. Spawning osascript costs about 100 ms per call, so the
+//! bridge starts it once with a small server script that reads JSON lines from
+//! stdin (`{id, script, args}`), evaluates each script with `Music`, `lib` and
+//! `ARGS` in scope, and writes one JSON line back. Arguments always travel as
+//! JSON, never by string interpolation into the script.
 
-use std::io::Read;
-use std::process::{Command as Proc, Stdio};
+use std::io::{BufRead, BufReader, Write};
+use std::process::{Child, ChildStdin, Command as Proc, Stdio};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
+use crossbeam_channel::{Receiver, RecvTimeoutError, unbounded};
+use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::MusicBridge;
@@ -14,11 +19,44 @@ use super::model::{PlayerStatus, Playlist, RepeatMode, Track, TrackId};
 
 pub const TIMEOUT: Duration = Duration::from_secs(5);
 
-const PRELUDE: &str = r#"
+// The server loop. `Music` and `lib` are re-resolved per request so a
+// relaunched Music.app is picked up. `eval` sees them because they are
+// top-level `var`s. `availableData` blocks until input arrives; the Rust side
+// kills the process on shutdown or timeout, so end-of-input handling is best
+// effort.
+const SERVER: &str = r#"
 ObjC.import("stdlib");
-const ARGS = JSON.parse($.getenv("APPYTUI_ARGS"));
-const Music = Application("Music");
-const lib = Music.libraryPlaylists[0];
+var stdin = $.NSFileHandle.fileHandleWithStandardInput;
+var stdout = $.NSFileHandle.fileHandleWithStandardOutput;
+var Music = null, lib = null, ARGS = {};
+var buf = "";
+function send(obj) {
+  var s = JSON.stringify(obj) + "\n";
+  stdout.writeData($.NSString.alloc.initWithUTF8String(s).dataUsingEncoding($.NSUTF8StringEncoding));
+}
+function handle(line) {
+  var req;
+  try { req = JSON.parse(line); } catch (e) { send({ id: null, ok: false, error: "bad request" }); return; }
+  try {
+    Music = Application("Music");
+    lib = Music.libraryPlaylists[0];
+    ARGS = req.args || {};
+    var result = eval(req.script);
+    send({ id: req.id, ok: true, result: result === undefined ? null : result });
+  } catch (e) {
+    send({ id: req.id, ok: false, error: String(e) });
+  }
+}
+while (true) {
+  var data = stdin.availableData;
+  if (!ObjC.unwrap(data.length)) break;
+  buf += ObjC.unwrap($.NSString.alloc.initWithDataEncoding(data, $.NSUTF8StringEncoding));
+  var nl;
+  while ((nl = buf.indexOf("\n")) >= 0) {
+    var line = buf.slice(0, nl); buf = buf.slice(nl + 1);
+    if (line.trim()) handle(line);
+  }
+}
 "#;
 
 const LIBRARY: &str = r#"
@@ -95,65 +133,153 @@ const SET_REPEAT: &str = "Music.songRepeat = ARGS.mode; \"ok\";";
 // `launch` starts Music.app in the background; `activate` would steal focus from the terminal.
 const LAUNCH: &str = "if (!Music.running()) { Music.launch(); } \"ok\";";
 
-/// Run a JXA script with `args` available as the `ARGS` constant. Kills the
-/// process after `timeout`.
-pub fn run_script(script: &str, args: &Value, timeout: Duration) -> Result<String> {
-    let full = format!("{PRELUDE}\n{script}");
-    let mut child = Proc::new("osascript")
-        .args(["-l", "JavaScript", "-e", &full])
-        .env("APPYTUI_ARGS", args.to_string())
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("spawning osascript")?;
-    let mut stdout = child.stdout.take().expect("piped stdout");
-    let mut stderr = child.stderr.take().expect("piped stderr");
-    let reader = std::thread::spawn(move || {
-        let mut out = Vec::new();
-        let _ = stdout.read_to_end(&mut out);
-        let mut err = Vec::new();
-        let _ = stderr.read_to_end(&mut err);
-        (out, err)
-    });
-    let start = Instant::now();
-    let status = loop {
-        if let Some(status) = child.try_wait().context("waiting for osascript")? {
-            break status;
-        }
-        if start.elapsed() > timeout {
-            let _ = child.kill();
-            let _ = child.wait();
-            bail!(
-                "osascript timed out after {}s (is Music.app showing a dialog?)",
-                timeout.as_secs()
-            );
-        }
-        std::thread::sleep(Duration::from_millis(5));
-    };
-    let (out, err) = reader.join().expect("reader thread");
-    if !status.success() {
-        let msg = String::from_utf8_lossy(&err);
-        bail!("osascript failed: {}", msg.trim());
+#[derive(Debug, Deserialize)]
+struct Reply {
+    id: Option<u64>,
+    ok: bool,
+    #[serde(default)]
+    result: Value,
+    #[serde(default)]
+    error: String,
+}
+
+/// One long-lived osascript evaluating scripts sent as JSON lines.
+struct Server {
+    child: Child,
+    stdin: ChildStdin,
+    replies: Receiver<Reply>,
+    next_id: u64,
+    /// Set when a call timed out or the process died; the bridge then replaces it.
+    broken: bool,
+}
+
+impl Server {
+    fn spawn() -> Result<Server> {
+        let mut child = Proc::new("osascript")
+            .args(["-l", "JavaScript", "-e", SERVER])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .context("spawning osascript")?;
+        let stdin = child.stdin.take().expect("piped stdin");
+        let stdout = child.stdout.take().expect("piped stdout");
+        let (tx, rx) = unbounded();
+        std::thread::Builder::new()
+            .name("osascript-reader".into())
+            .spawn(move || {
+                for line in BufReader::new(stdout).lines() {
+                    let Ok(line) = line else { break };
+                    if let Ok(reply) = serde_json::from_str::<Reply>(&line)
+                        && tx.send(reply).is_err()
+                    {
+                        break;
+                    }
+                }
+            })
+            .expect("spawn osascript reader thread");
+        Ok(Server {
+            child,
+            stdin,
+            replies: rx,
+            next_id: 1,
+            broken: false,
+        })
     }
-    Ok(String::from_utf8_lossy(&out).trim_end().to_string())
+
+    fn call(&mut self, script: &str, args: &Value, timeout: Duration) -> Result<String> {
+        let id = self.next_id;
+        self.next_id += 1;
+        let line = json!({ "id": id, "script": script, "args": args }).to_string();
+        if writeln!(self.stdin, "{line}")
+            .and_then(|_| self.stdin.flush())
+            .is_err()
+        {
+            self.broken = true;
+            bail!("osascript exited");
+        }
+        let deadline = Instant::now() + timeout;
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            match self.replies.recv_timeout(remaining) {
+                Ok(reply) if reply.id == Some(id) => {
+                    if reply.ok {
+                        return Ok(match reply.result {
+                            Value::String(s) => s,
+                            Value::Null => String::new(),
+                            other => other.to_string(),
+                        });
+                    }
+                    bail!("osascript failed: {}", reply.error);
+                }
+                // A reply to an earlier call that timed out; not possible once
+                // the server is replaced, but harmless to skip.
+                Ok(_) => continue,
+                Err(RecvTimeoutError::Timeout) => {
+                    self.broken = true;
+                    bail!(
+                        "osascript timed out after {:.1}s (is Music.app showing a dialog?)",
+                        timeout.as_secs_f64()
+                    );
+                }
+                Err(RecvTimeoutError::Disconnected) => {
+                    self.broken = true;
+                    bail!("osascript exited");
+                }
+            }
+        }
+    }
+}
+
+impl Drop for Server {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
 }
 
 pub struct JxaBridge {
     timeout: Duration,
+    server: Option<Server>,
 }
 
 impl JxaBridge {
     pub fn new() -> Self {
-        Self { timeout: TIMEOUT }
+        Self {
+            timeout: TIMEOUT,
+            server: None,
+        }
     }
 
-    fn run(&self, script: &str, args: Value) -> Result<String> {
-        run_script(script, &args, self.timeout)
+    /// Evaluate `script` with `args` bound to `ARGS`, starting or replacing the
+    /// osascript process as needed. The result is the script's final
+    /// expression as a string.
+    fn eval(&mut self, script: &str, args: Value, timeout: Duration) -> Result<String> {
+        if self.server.as_ref().is_some_and(|s| s.broken) {
+            self.server = None;
+        }
+        let server = match self.server.as_mut() {
+            Some(s) => s,
+            None => self.server.insert(Server::spawn()?),
+        };
+        let result = server.call(script, &args, timeout);
+        if server.broken {
+            self.server = None;
+        }
+        result
+    }
+
+    fn run(&mut self, script: &str, args: Value) -> Result<String> {
+        self.eval(script, args, self.timeout)
+    }
+
+    #[cfg(test)]
+    fn server_pid(&self) -> Option<u32> {
+        self.server.as_ref().map(|s| s.child.id())
     }
 
     /// Launch Music.app if needed. Called once at startup.
-    pub fn ensure_running(&self) -> Result<()> {
+    pub fn ensure_running(&mut self) -> Result<()> {
         self.run(LAUNCH, json!({})).map(|_| ())
     }
 }
@@ -185,9 +311,9 @@ impl MusicBridge for JxaBridge {
     }
     fn load_playlists(&mut self) -> Result<Vec<Playlist>> {
         // Bulk dump of every playlist takes a few seconds on large libraries.
-        parse_playlists(&run_script(
+        parse_playlists(&self.eval(
             PLAYLISTS,
-            &json!({ "skip": OWN_PLAYLIST }),
+            json!({ "skip": OWN_PLAYLIST }),
             Duration::from_secs(60),
         )?)
     }
@@ -210,7 +336,8 @@ impl MusicBridge for JxaBridge {
         let args = json!({ "name": OWN_PLAYLIST, "tracks": ids });
         // Each track copied into the playlist is a round trip inside Music.app
         // (about 17 ms), so a long artist list takes a few seconds.
-        run_script(PLAY_TRACKS, &args, Duration::from_secs(60)).map(|_| ())
+        self.eval(PLAY_TRACKS, args, Duration::from_secs(60))
+            .map(|_| ())
     }
     fn play_pause(&mut self) -> Result<()> {
         self.run(PLAY_PAUSE, json!({})).map(|_| ())
@@ -284,16 +411,55 @@ mod tests {
     }
 
     #[test]
-    fn run_script_passes_args_through_env() {
-        let out = run_script("ARGS.x + 1;", &json!({"x": 41}), TIMEOUT).unwrap();
-        assert_eq!(out, "42");
+    fn server_passes_args_and_returns_the_result() {
+        let mut b = JxaBridge::new();
+        assert_eq!(
+            b.eval("ARGS.x + 1;", json!({"x": 41}), TIMEOUT).unwrap(),
+            "42"
+        );
+        assert_eq!(
+            b.eval(
+                "JSON.stringify({ a: ARGS.a });",
+                json!({"a": "é\n"}),
+                TIMEOUT
+            )
+            .unwrap(),
+            r#"{"a":"é\n"}"#
+        );
     }
 
     #[test]
-    fn run_script_times_out() {
-        let err =
-            run_script("while (true) {}", &json!({}), Duration::from_millis(300)).unwrap_err();
+    fn server_is_reused_between_calls() {
+        let mut b = JxaBridge::new();
+        b.eval("1;", json!({}), TIMEOUT).unwrap();
+        let pid = b.server_pid();
+        b.eval("2;", json!({}), TIMEOUT).unwrap();
+        assert_eq!(b.server_pid(), pid);
+    }
+
+    #[test]
+    fn server_reports_script_errors_and_keeps_running() {
+        let mut b = JxaBridge::new();
+        let err = b
+            .eval("throw new Error('boom');", json!({}), TIMEOUT)
+            .unwrap_err();
+        assert!(err.to_string().contains("boom"), "{err}");
+        let pid = b.server_pid();
+        assert_eq!(b.eval("3;", json!({}), TIMEOUT).unwrap(), "3");
+        assert_eq!(b.server_pid(), pid);
+    }
+
+    #[test]
+    fn server_times_out_and_is_replaced() {
+        let mut b = JxaBridge::new();
+        b.eval("1;", json!({}), TIMEOUT).unwrap();
+        let pid = b.server_pid();
+        let err = b
+            .eval("while (true) {}", json!({}), Duration::from_millis(300))
+            .unwrap_err();
         assert!(err.to_string().contains("timed out"), "{err}");
+        assert_eq!(b.eval("4;", json!({}), TIMEOUT).unwrap(), "4");
+        assert_ne!(b.server_pid(), pid);
     }
 
     #[test]
