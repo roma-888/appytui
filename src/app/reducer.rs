@@ -29,10 +29,8 @@ pub fn reduce(app: &mut App, action: Action) -> Vec<Effect> {
     match action {
         Action::Key(key) => on_key(app, key),
         Action::Tick => {
-            if let Some((_, at)) = &app.message {
-                if at.elapsed() > MESSAGE_TTL {
-                    app.message = None;
-                }
+            if app.message.as_ref().is_some_and(|(_, at)| at.elapsed() > MESSAGE_TTL) {
+                app.message = None;
             }
             Vec::new()
         }

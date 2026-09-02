@@ -63,7 +63,6 @@ fn handle(bridge: &mut dyn MusicBridge, events: &Sender<Event>, cmd: Command) {
         Command::LoadPlaylists => bridge.load_playlists().map(|p| {
             let _ = events.send(Event::Playlists(p));
         }),
-        Command::Status => Ok(()),
         Command::PlayTrack { track, context } => bridge.play_track(&track, context.as_ref()),
         Command::PlayPause => bridge.play_pause(),
         Command::Next => bridge.next(),

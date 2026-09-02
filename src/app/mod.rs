@@ -29,10 +29,13 @@ pub struct App {
     pub context: PlayContext,
     pub message: Option<(String, Instant)>,
     pub show_help: bool,
+    #[allow(dead_code)] // read by ui::visualizer (Task 11)
     pub viz: VizSettings,
+    #[allow(dead_code)]
     pub viz_simulated: bool,
     pub theme: Theme,
     pub truecolor: bool,
+    #[allow(dead_code)] // read by the art lookup (Task 12)
     pub art_enabled: bool,
     pub music_pid: Option<u32>,
     pub should_quit: bool,

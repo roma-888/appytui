@@ -10,9 +10,11 @@ use crate::music::model::{PlayerState, fmt_duration};
 
 /// Sub-areas of the now-playing pane that later tasks draw into.
 pub struct Areas {
+    #[allow(dead_code)] // drawn by Task 12
     pub art: Rect,
     pub info: Rect,
     pub progress: Rect,
+    #[allow(dead_code)] // drawn by Task 11
     pub viz: Rect,
     pub flags: Rect,
 }

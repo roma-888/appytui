@@ -2,6 +2,7 @@
 
 use anyhow::Result;
 
+#[cfg(test)]
 pub mod fake;
 pub mod jxa;
 pub mod model;
@@ -29,7 +30,6 @@ pub trait MusicBridge: Send {
 pub enum Command {
     LoadLibrary,
     LoadPlaylists,
-    Status,
     PlayTrack { track: TrackId, context: Option<PlaylistId> },
     PlayPause,
     Next,
