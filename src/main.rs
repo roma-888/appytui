@@ -15,10 +15,11 @@ use ratatui::crossterm::event::{self, Event as TermEvent};
 use app::App;
 use app::reducer::{Action, Effect, reduce};
 use art::{ArtRequest, ArtResult};
-use config::Config;
 use config::theme::Theme;
+use config::{ArtProtocol, Config};
 use music::Command;
 use music::jxa::JxaBridge;
+use ratatui_image::picker::{Picker, ProtocolType};
 use viz::{Control, VizEvent};
 
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
@@ -101,6 +102,31 @@ fn run(args: cli::Args) -> Result<()> {
     let ticker = crossbeam_channel::tick(TICK);
 
     let mut app = App::new(theme, viz, art_enabled);
+    if art_enabled {
+        // Must run before the alternate screen: it exchanges escape sequences with the terminal.
+        let env: Vec<(String, String)> = std::env::vars().collect();
+        let query = art::should_query_terminal(env.iter().map(|(k, v)| (k.as_str(), v.as_str())));
+        let pixels = matches!(
+            config.art.protocol,
+            ArtProtocol::Kitty | ArtProtocol::Sixel | ArtProtocol::Iterm2
+        );
+        let mut picker = if query || pixels {
+            Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks())
+        } else {
+            Picker::halfblocks()
+        };
+        let forced = match config.art.protocol {
+            ArtProtocol::Auto => None,
+            ArtProtocol::Kitty => Some(ProtocolType::Kitty),
+            ArtProtocol::Sixel => Some(ProtocolType::Sixel),
+            ArtProtocol::Iterm2 => Some(ProtocolType::Iterm2),
+            ArtProtocol::Halfblocks => Some(ProtocolType::Halfblocks),
+        };
+        if let Some(p) = forced {
+            picker.set_protocol_type(p);
+        }
+        app.picker = picker;
+    }
     let mut terminal = ratatui::init();
     terminal.draw(|f| ui::draw(f, &mut app))?;
 

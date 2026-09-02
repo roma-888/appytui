@@ -19,6 +19,7 @@ rustfft = "6"
 ringbuf = "0.4"
 ureq = { version = "3", features = ["json"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+ratatui-image = { version = "11", default-features = false, features = ["crossterm"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 cidre = { version = "0.24", default-features = false, features = ["core_audio", "macos_14_2"] }

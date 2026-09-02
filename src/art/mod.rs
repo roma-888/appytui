@@ -7,9 +7,7 @@ use std::thread::JoinHandle;
 
 use anyhow::{Context, Result, anyhow};
 use crossbeam_channel::{Receiver, Sender};
-use image::RgbImage;
-
-pub mod render;
+use image::DynamicImage;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ArtRequest {
@@ -21,13 +19,42 @@ pub struct ArtRequest {
 #[derive(Debug, Clone)]
 pub struct ArtResult {
     pub key: String,
-    pub image: Option<RgbImage>,
+    pub image: Option<DynamicImage>,
 }
 
 impl PartialEq for ArtResult {
     fn eq(&self, other: &Self) -> bool {
         self.key == other.key && self.image.is_some() == other.image.is_some()
     }
+}
+
+/// Whether it is safe to query the terminal for graphics support. ratatui-image's
+/// query leaves a stdin reader behind on terminals that never answer, which then
+/// swallows keystrokes, so only ask terminals known to reply. `env` is the
+/// process environment (injectable for tests).
+pub fn should_query_terminal<'a>(env: impl Iterator<Item = (&'a str, &'a str)>) -> bool {
+    let mut program = "";
+    let mut term = "";
+    let mut kitty = false;
+    let mut tmux = false;
+    for (k, v) in env {
+        match k {
+            "TERM_PROGRAM" => program = v,
+            "TERM" => term = v,
+            "KITTY_WINDOW_ID" | "KITTY_PID" => kitty = true,
+            "TMUX" => tmux = !v.is_empty(),
+            _ => {}
+        }
+    }
+    if tmux {
+        return false;
+    }
+    kitty
+        || term.starts_with("xterm-kitty")
+        || matches!(
+            program.to_ascii_lowercase().as_str(),
+            "ghostty" | "wezterm" | "iterm.app" | "kitty" | "rio" | "warpterminal"
+        )
 }
 
 pub fn cache_key(artist: &str, album: &str) -> String {
@@ -65,6 +92,12 @@ pub fn parse_lookup(json: &str) -> Result<String> {
         .ok_or_else(|| anyhow!("no artwork in search results"))
 }
 
+/// Apple serves the same artwork path at larger sizes; 600 px looks right for
+/// pixel-image terminals and still resamples well for half-blocks.
+pub fn hires_url(url: &str) -> String {
+    url.replace("100x100bb", "600x600bb")
+}
+
 pub fn lookup_url(artist: &str, name: &str) -> Result<String> {
     let term: String = format!("{artist} {name}")
         .chars()
@@ -83,12 +116,12 @@ pub fn lookup_url(artist: &str, name: &str) -> Result<String> {
     parse_lookup(&body)
 }
 
-fn fetch(cache_dir: &PathBuf, req: &ArtRequest) -> Result<RgbImage> {
-    let path = cache_dir.join(format!("{}.jpg", req.key));
+fn fetch(cache_dir: &PathBuf, req: &ArtRequest) -> Result<DynamicImage> {
+    let path = cache_dir.join(format!("{}-600.jpg", req.key));
     let bytes = if path.is_file() {
         std::fs::read(&path).context("reading cached art")?
     } else {
-        let url = lookup_url(&req.artist, &req.name)?;
+        let url = hires_url(&lookup_url(&req.artist, &req.name)?);
         let bytes = ureq::get(&url)
             .call()
             .context("downloading art")?
@@ -99,9 +132,7 @@ fn fetch(cache_dir: &PathBuf, req: &ArtRequest) -> Result<RgbImage> {
         std::fs::write(&path, &bytes).ok();
         bytes
     };
-    Ok(image::load_from_memory(&bytes)
-        .context("decoding art")?
-        .to_rgb8())
+    image::load_from_memory(&bytes).context("decoding art")
 }
 
 pub fn spawn(
@@ -153,13 +184,41 @@ mod tests {
     }
 
     #[test]
+    fn terminal_query_gate() {
+        let q = |pairs: &[(&str, &str)]| should_query_terminal(pairs.iter().copied());
+        assert!(q(&[
+            ("TERM_PROGRAM", "ghostty"),
+            ("TERM", "xterm-256color")
+        ]));
+        assert!(q(&[("TERM_PROGRAM", "WezTerm")]));
+        assert!(q(&[("KITTY_WINDOW_ID", "1")]));
+        assert!(q(&[("TERM", "xterm-kitty")]));
+        assert!(!q(&[("TERM_PROGRAM", "Apple_Terminal")]));
+        assert!(!q(&[("TERM", "xterm-256color")]));
+        assert!(!q(&[
+            ("TERM_PROGRAM", "ghostty"),
+            ("TMUX", "/tmp/tmux-1/default,1,0")
+        ]));
+        assert!(!q(&[]));
+    }
+
+    #[test]
+    fn hires_url_rewrites_size() {
+        assert_eq!(
+            hires_url("https://x/abc/100x100bb.jpg"),
+            "https://x/abc/600x600bb.jpg"
+        );
+        assert_eq!(hires_url("https://x/other.jpg"), "https://x/other.jpg");
+    }
+
+    #[test]
     fn worker_serves_from_cache_without_network() {
         let dir = std::env::temp_dir().join(format!("appytui-art-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let mut img = RgbImage::new(4, 4);
+        let mut img = image::RgbImage::new(4, 4);
         img.put_pixel(0, 0, image::Rgb([9, 9, 9]));
         let key = cache_key("Artist", "Album");
-        img.save(dir.join(format!("{key}.jpg"))).unwrap();
+        img.save(dir.join(format!("{key}-600.jpg"))).unwrap();
 
         let (req_tx, req_rx) = crossbeam_channel::unbounded();
         let (res_tx, res_rx) = crossbeam_channel::unbounded();
@@ -184,7 +243,7 @@ mod tests {
     #[test]
     #[ignore = "needs network"]
     fn live_lookup_finds_cover() {
-        let url = lookup_url("a-ha", "Take On Me").unwrap();
-        assert!(url.ends_with(".jpg"), "{url}");
+        let url = hires_url(&lookup_url("a-ha", "Take On Me").unwrap());
+        assert!(url.ends_with("600x600bb.jpg"), "{url}");
     }
 }

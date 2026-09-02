@@ -57,7 +57,9 @@ pub fn reduce(app: &mut App, action: Action) -> Vec<Effect> {
         }
         Action::Art(res) => {
             if app.art_key.as_deref() == Some(res.key.as_str()) {
-                app.art = res.image.map(|img| (res.key, img));
+                app.art = res
+                    .image
+                    .map(|img| (res.key, app.picker.new_resize_protocol(img)));
             }
             Vec::new()
         }
@@ -600,7 +602,7 @@ mod tests {
             &mut a,
             Action::Art(ArtResult {
                 key: key.clone(),
-                image: Some(image::RgbImage::new(1, 1)),
+                image: Some(image::DynamicImage::new_rgb8(1, 1)),
             }),
         );
         assert!(a.art.is_some());
@@ -608,7 +610,7 @@ mod tests {
             &mut a,
             Action::Art(ArtResult {
                 key: "stale".into(),
-                image: Some(image::RgbImage::new(1, 1)),
+                image: Some(image::DynamicImage::new_rgb8(1, 1)),
             }),
         );
         assert_eq!(a.art.as_ref().map(|(k, _)| k.as_str()), Some(key.as_str()));

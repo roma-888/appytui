@@ -4,9 +4,10 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, LineGauge, Paragraph};
 
+use ratatui_image::StatefulImage;
+
 use super::Palette;
 use crate::app::App;
-use crate::config::theme::to_color;
 use crate::music::model::{PlayerState, fmt_duration};
 
 /// Sub-areas of the now-playing pane that later tasks draw into.
@@ -60,24 +61,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, p: &Palette, area: Rect) {
         );
     }
 
-    if let Some((_, img)) = &app.art
+    if let Some((_, protocol)) = app.art.as_mut()
         && areas.art.height > 0
     {
-        let cells = crate::art::render::to_cells(
-            img,
-            areas.art.width.min(areas.art.height * 2),
-            areas.art.height,
-        );
-        let cols = cells.first().map(|r| r.len() as u16).unwrap_or(0);
-        let x0 = areas.art.x + (areas.art.width - cols) / 2;
-        for (dy, row) in cells.iter().enumerate() {
-            for (dx, (top, bottom)) in row.iter().enumerate() {
-                let cell = &mut frame.buffer_mut()[(x0 + dx as u16, areas.art.y + dy as u16)];
-                cell.set_symbol("▄");
-                cell.set_fg(to_color(*bottom, app.truecolor));
-                cell.set_bg(to_color(*top, app.truecolor));
-            }
-        }
+        frame.render_stateful_widget(StatefulImage::default(), areas.art, protocol);
     }
 
     let Some(track) = app.current_track().cloned() else {

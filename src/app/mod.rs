@@ -2,6 +2,9 @@
 
 use std::time::{Duration, Instant};
 
+use ratatui_image::picker::Picker;
+use ratatui_image::protocol::StatefulProtocol;
+
 use crate::config::VizSettings;
 use crate::config::theme::Theme;
 use crate::music::model::{PlayerState, PlayerStatus, Playlist, Track};
@@ -42,8 +45,10 @@ pub struct App {
     pub theme: Theme,
     pub truecolor: bool,
     pub art_enabled: bool,
-    /// Decoded cover for the current album, keyed by `art::cache_key`.
-    pub art: Option<(String, image::RgbImage)>,
+    /// Terminal graphics capability; set once at startup by main.rs.
+    pub picker: Picker,
+    /// Cover for the current album, keyed by `art::cache_key`, ready to render.
+    pub art: Option<(String, StatefulProtocol)>,
     pub art_key: Option<String>,
     pub music_pid: Option<u32>,
     pub should_quit: bool,
@@ -71,6 +76,7 @@ impl App {
             theme,
             truecolor: crate::config::theme::terminal_supports_truecolor(),
             art_enabled,
+            picker: Picker::halfblocks(),
             art: None,
             art_key: None,
             music_pid: None,

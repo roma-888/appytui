@@ -137,4 +137,74 @@ mod tests {
         let text = render(&mut app);
         assert!(text.contains("play / pause"));
     }
+
+    fn app_with_art(protocol: ratatui_image::picker::ProtocolType) -> App {
+        use ratatui_image::picker::Picker;
+        let mut app = App::new(
+            Theme::builtin("terminal").unwrap(),
+            VizSettings::default(),
+            true,
+        );
+        #[allow(deprecated)]
+        // the only constructor that lets a test pin a font size without a terminal
+        let mut picker = Picker::from_fontsize((8, 16).into());
+        picker.set_protocol_type(protocol);
+        app.picker = picker;
+        reduce(
+            &mut app,
+            Action::Bridge(Event::Library(vec![track(
+                "1",
+                "Alpha Song",
+                "Ann",
+                "Album A",
+            )])),
+        );
+        reduce(
+            &mut app,
+            Action::Bridge(Event::Status(PlayerStatus {
+                state: PlayerState::Playing,
+                track_id: Some(TrackId("1".into())),
+                ..PlayerStatus::default()
+            })),
+        );
+        let key = crate::art::cache_key("Ann", "Album A");
+        let mut img = image::RgbImage::new(16, 16);
+        img.put_pixel(0, 0, image::Rgb([200, 10, 10]));
+        reduce(
+            &mut app,
+            Action::Art(crate::art::ArtResult {
+                key,
+                image: Some(image::DynamicImage::ImageRgb8(img)),
+            }),
+        );
+        app
+    }
+
+    #[test]
+    fn kitty_protocol_emits_graphics_escape_sequences() {
+        let mut app = app_with_art(ratatui_image::picker::ProtocolType::Kitty);
+        let mut term = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        term.draw(|f| draw(f, &mut app)).unwrap();
+        let joined: String = term
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(
+            joined.contains("\x1b_G"),
+            "no Kitty APC sequence in rendered cells"
+        );
+    }
+
+    #[test]
+    fn halfblocks_protocol_draws_block_cells() {
+        let mut app = app_with_art(ratatui_image::picker::ProtocolType::Halfblocks);
+        let text = render(&mut app);
+        assert!(
+            text.contains('▄') || text.contains('▀'),
+            "no half-block cells rendered"
+        );
+    }
 }

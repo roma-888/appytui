@@ -42,6 +42,8 @@ name = "catppuccin-mocha"
 
 [art]
 enabled = true
+# auto | kitty | sixel | iterm2 | halfblocks — auto queries the terminal at startup
+protocol = "auto"
 "#;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -129,15 +131,30 @@ impl Default for ThemeConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ArtProtocol {
+    #[default]
+    Auto,
+    Kitty,
+    Sixel,
+    Iterm2,
+    Halfblocks,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ArtConfig {
     pub enabled: bool,
+    pub protocol: ArtProtocol,
 }
 
 impl Default for ArtConfig {
     fn default() -> Self {
-        Self { enabled: true }
+        Self {
+            enabled: true,
+            protocol: ArtProtocol::Auto,
+        }
     }
 }
 
