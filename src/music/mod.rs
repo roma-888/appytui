@@ -1,0 +1,50 @@
+//! Bridge to Music.app. The real implementation is `jxa::JxaBridge`; tests use `fake::FakeBridge`.
+
+use anyhow::Result;
+
+pub mod fake;
+pub mod model;
+
+use model::{PlayerStatus, Playlist, PlaylistId, RepeatMode, Track, TrackId};
+
+pub trait MusicBridge: Send {
+    fn load_library(&mut self) -> Result<Vec<Track>>;
+    fn load_playlists(&mut self) -> Result<Vec<Playlist>>;
+    fn status(&mut self) -> Result<PlayerStatus>;
+    fn music_pid(&mut self) -> Result<u32>;
+    fn play_track(&mut self, track: &TrackId, context: Option<&PlaylistId>) -> Result<()>;
+    fn play_pause(&mut self) -> Result<()>;
+    fn next(&mut self) -> Result<()>;
+    fn previous(&mut self) -> Result<()>;
+    fn seek(&mut self, seconds: f64) -> Result<()>;
+    fn set_volume(&mut self, percent: u8) -> Result<()>;
+    fn set_shuffle(&mut self, on: bool) -> Result<()>;
+    fn set_repeat(&mut self, mode: RepeatMode) -> Result<()>;
+}
+
+/// Sent from the app to the bridge worker.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Command {
+    LoadLibrary,
+    LoadPlaylists,
+    Status,
+    PlayTrack { track: TrackId, context: Option<PlaylistId> },
+    PlayPause,
+    Next,
+    Previous,
+    Seek(f64),
+    SetVolume(u8),
+    SetShuffle(bool),
+    SetRepeat(RepeatMode),
+    Shutdown,
+}
+
+/// Sent from the bridge worker to the app.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Event {
+    Library(Vec<Track>),
+    Playlists(Vec<Playlist>),
+    Status(PlayerStatus),
+    MusicPid(u32),
+    Error(String),
+}
