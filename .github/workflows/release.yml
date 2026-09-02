@@ -52,3 +52,11 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --title "appytui $GITHUB_REF_NAME" \
             --generate-notes
+
+  formula:
+    needs: release
+    uses: ./.github/workflows/formula.yml
+    with:
+      tag: ${{ github.ref_name }}
+    secrets:
+      TAP_TOKEN: ${{ secrets.TAP_TOKEN }}

@@ -1,0 +1,82 @@
+# Bumps Formula/appytui.rb in roma-888/homebrew-tap to a published release.
+# Called by release.yml after the assets are uploaded, or run by hand with a
+# tag. Idempotent: re-running on a release the formula already matches is a
+# no-op. Needs the TAP_TOKEN secret: a fine-grained PAT with contents
+# read/write on roma-888/homebrew-tap.
+name: Formula
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+    secrets:
+      TAP_TOKEN:
+        required: true
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag, e.g. v0.4.0
+        required: true
+        type: string
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch release checksums
+        id: sums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*.sha256' --dir sums
+          arm=$(cut -d' ' -f1 "sums/appytui-$TAG-aarch64-apple-darwin.tar.gz.sha256")
+          x86=$(cut -d' ' -f1 "sums/appytui-$TAG-x86_64-apple-darwin.tar.gz.sha256")
+          [ ${#arm} -eq 64 ] && [ ${#x86} -eq 64 ]
+          {
+            echo "version=${TAG#v}"
+            echo "arm=$arm"
+            echo "x86=$x86"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          repository: roma-888/homebrew-tap
+          token: ${{ secrets.TAP_TOKEN }}
+          path: tap
+
+      - name: Rewrite version and checksums
+        env:
+          VERSION: ${{ steps.sums.outputs.version }}
+          ARM: ${{ steps.sums.outputs.arm }}
+          X86: ${{ steps.sums.outputs.x86 }}
+        run: |
+          python3 - <<'PY'
+          import os, re
+          path = "tap/Formula/appytui.rb"
+          s = open(path).read()
+          s, n1 = re.subn(r'^(\s*version ")[^"]*"', lambda m: f'{m.group(1)}{os.environ["VERSION"]}"', s, count=1, flags=re.M)
+          s, n2 = re.subn(r'(on_arm do\n\s*url [^\n]*\n\s*sha256 ")[0-9a-f]{64}', lambda m: m.group(1) + os.environ["ARM"], s, count=1)
+          s, n3 = re.subn(r'(on_intel do\n\s*url [^\n]*\n\s*sha256 ")[0-9a-f]{64}', lambda m: m.group(1) + os.environ["X86"], s, count=1)
+          assert (n1, n2, n3) == (1, 1, 1), (n1, n2, n3)
+          open(path, "w").write(s)
+          PY
+          grep -nE 'version "|sha256 "' tap/Formula/appytui.rb
+
+      - name: Commit and push
+        env:
+          VERSION: ${{ steps.sums.outputs.version }}
+        run: |
+          set -euo pipefail
+          cd tap
+          if git diff --quiet; then
+            echo "formula already at $VERSION"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "appytui $VERSION"
+          git push
