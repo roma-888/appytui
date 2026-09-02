@@ -22,7 +22,9 @@ pub struct Areas {
 
 pub fn layout(inner: Rect) -> Areas {
     // Art is square-ish: two pixels per cell vertically, so width ≈ 2 × height.
-    let art_h = (inner.width / 2).min(inner.height / 2).min(12);
+    // Let it grow with the pane but always leave room for info, progress,
+    // flags and at least seven rows of visualizer.
+    let art_h = (inner.width / 2).min(inner.height.saturating_sub(12));
     let [art, info, progress, viz, flags] = Layout::vertical([
         Constraint::Length(art_h),
         Constraint::Length(3),

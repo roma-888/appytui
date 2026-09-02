@@ -11,6 +11,8 @@ pub mod worker;
 use model::{PlayerStatus, Playlist, PlaylistId, RepeatMode, Track, TrackId};
 
 pub trait MusicBridge: Send {
+    /// Start Music.app if it is not running (without stealing focus).
+    fn ensure_running(&mut self) -> Result<()>;
     fn load_library(&mut self) -> Result<Vec<Track>>;
     fn load_playlists(&mut self) -> Result<Vec<Playlist>>;
     fn status(&mut self) -> Result<PlayerStatus>;

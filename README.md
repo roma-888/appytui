@@ -35,7 +35,7 @@ app, not to appytui. If you decline audio recording the visualizer runs simulate
 | s / r | shuffle / repeat |
 | / then Esc | filter / clear |
 | v / V / w | visualizer on-off / orientation / waveform |
-| ? / q | help / quit |
+| ? / q, Ctrl-C | help / quit |
 
 ## Config
 

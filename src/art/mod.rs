@@ -13,6 +13,7 @@ use image::DynamicImage;
 pub struct ArtRequest {
     pub key: String,
     pub artist: String,
+    pub album: String,
     pub name: String,
 }
 
@@ -98,15 +99,19 @@ pub fn hires_url(url: &str) -> String {
     url.replace("100x100bb", "600x600bb")
 }
 
-pub fn lookup_url(artist: &str, name: &str) -> Result<String> {
-    let term: String = format!("{artist} {name}")
+fn search_term(parts: &[&str]) -> String {
+    parts
+        .join(" ")
         .chars()
         .map(|c| if c.is_alphanumeric() { c } else { ' ' })
         .collect::<String>()
         .split_whitespace()
         .collect::<Vec<_>>()
-        .join("+");
-    let url = format!("https://itunes.apple.com/search?term={term}&entity=song&limit=1");
+        .join("+")
+}
+
+fn search(term: &str, entity: &str) -> Result<String> {
+    let url = format!("https://itunes.apple.com/search?term={term}&entity={entity}&limit=1");
     let body = ureq::get(&url)
         .call()
         .context("iTunes search request")?
@@ -116,12 +121,23 @@ pub fn lookup_url(artist: &str, name: &str) -> Result<String> {
     parse_lookup(&body)
 }
 
+/// Prefer the album's own cover (artist + album, album entity); fall back to
+/// the song search, which may return a single or compilation cover.
+pub fn lookup_url(artist: &str, album: &str, name: &str) -> Result<String> {
+    if !album.trim().is_empty()
+        && let Ok(url) = search(&search_term(&[artist, album]), "album")
+    {
+        return Ok(url);
+    }
+    search(&search_term(&[artist, name]), "song")
+}
+
 fn fetch(cache_dir: &PathBuf, req: &ArtRequest) -> Result<DynamicImage> {
     let path = cache_dir.join(format!("{}-600.jpg", req.key));
     let bytes = if path.is_file() {
         std::fs::read(&path).context("reading cached art")?
     } else {
-        let url = hires_url(&lookup_url(&req.artist, &req.name)?);
+        let url = hires_url(&lookup_url(&req.artist, &req.album, &req.name)?);
         let bytes = ureq::get(&url)
             .call()
             .context("downloading art")?
@@ -203,6 +219,14 @@ mod tests {
     }
 
     #[test]
+    fn search_term_strips_punctuation() {
+        assert_eq!(
+            search_term(&["a-ha", "Hunting High & Low"]),
+            "a+ha+Hunting+High+Low"
+        );
+    }
+
+    #[test]
     fn hires_url_rewrites_size() {
         assert_eq!(
             hires_url("https://x/abc/100x100bb.jpg"),
@@ -227,6 +251,7 @@ mod tests {
             .send(ArtRequest {
                 key: key.clone(),
                 artist: "Artist".into(),
+                album: "Album".into(),
                 name: "Song".into(),
             })
             .unwrap();
@@ -243,7 +268,7 @@ mod tests {
     #[test]
     #[ignore = "needs network"]
     fn live_lookup_finds_cover() {
-        let url = hires_url(&lookup_url("a-ha", "Take On Me").unwrap());
+        let url = hires_url(&lookup_url("a-ha", "Hunting High and Low", "Take On Me").unwrap());
         assert!(url.ends_with("600x600bb.jpg"), "{url}");
     }
 }

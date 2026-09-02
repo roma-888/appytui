@@ -89,6 +89,7 @@ impl TabView {
 pub struct Filter {
     matcher: Matcher,
     buf: Vec<char>,
+    pub rank_calls: usize,
 }
 
 impl Default for Filter {
@@ -102,11 +103,13 @@ impl Filter {
         Self {
             matcher: Matcher::new(Config::DEFAULT),
             buf: Vec::new(),
+            rank_calls: 0,
         }
     }
 
     /// Return the ids of matching items, best match first. Empty query matches nothing.
     pub fn rank(&mut self, query: &str, items: &[(usize, String)]) -> Vec<usize> {
+        self.rank_calls += 1;
         if query.trim().is_empty() {
             return Vec::new();
         }

@@ -19,6 +19,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, p: &Palette, area: Rect) {
         frame.render_widget(Paragraph::new("Loading library…").block(block), area);
         return;
     }
+    if app.tab == Tab::Playlists && !app.playlists_loaded && app.view().drill == Drill::Top {
+        frame.render_widget(Paragraph::new("Loading playlists…").block(block), area);
+        return;
+    }
     let rows = app.rows(app.tab);
     let cursor = app.view().cursor.min(rows.len().saturating_sub(1));
     let current = app.status.track_id.clone();

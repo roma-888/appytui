@@ -113,6 +113,11 @@ mod tests {
                 "Album A",
             )])),
         );
+        app.tab = crate::app::views::Tab::Playlists;
+        assert!(render(&mut app).contains("Loading playlists"));
+        reduce(&mut app, Action::Bridge(Event::Playlists(vec![])));
+        assert!(!render(&mut app).contains("Loading playlists"));
+        app.tab = crate::app::views::Tab::Songs;
         reduce(
             &mut app,
             Action::Bridge(Event::Status(PlayerStatus {

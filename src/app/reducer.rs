@@ -71,13 +71,22 @@ fn on_bridge(app: &mut App, ev: Event) -> Vec<Effect> {
     match ev {
         Event::Library(tracks) => {
             app.library = Some(Library::new(tracks));
+            app.invalidate_rows();
         }
-        Event::Playlists(p) => app.playlists = p,
+        Event::Playlists(p) => {
+            app.playlists = p;
+            app.playlists_loaded = true;
+            app.invalidate_rows();
+        }
         Event::Status(s) => {
             let mut effects = Vec::new();
             let was_playing = app.status.state == PlayerState::Playing;
             if let Some(id) = &s.track_id {
+                let before = app.context.index;
                 app.context.resync(id);
+                if app.context.index != before {
+                    app.invalidate_rows();
+                }
             }
             let mut s = s;
             if app
@@ -103,6 +112,7 @@ fn on_bridge(app: &mut App, ev: Event) -> Vec<Effect> {
                         effects.push(Effect::LookupArt(ArtRequest {
                             key,
                             artist: track.artist,
+                            album: track.album,
                             name: track.name,
                         }));
                     }
@@ -125,6 +135,10 @@ fn on_bridge(app: &mut App, ev: Event) -> Vec<Effect> {
 }
 
 fn on_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+        app.should_quit = true;
+        return vec![Effect::Quit];
+    }
     if app.show_help {
         if matches!(
             key.code,
@@ -286,6 +300,7 @@ fn on_enter(app: &mut App) -> Vec<Effect> {
             };
             if app.tab == Tab::Queue {
                 app.context.resync(&track_id);
+                app.invalidate_rows();
             } else {
                 let ids: Vec<TrackId> = rows
                     .iter()
@@ -296,6 +311,7 @@ fn on_enter(app: &mut App) -> Vec<Effect> {
                     .collect();
                 let index = ids.iter().position(|id| *id == track_id).unwrap_or(0);
                 app.context = PlayContext::new(ids, index, playlist.clone());
+                app.invalidate_rows();
             }
             vec![Effect::Send(Command::PlayTrack {
                 track: track_id,
@@ -588,7 +604,8 @@ mod tests {
         assert!(fx.contains(&Effect::LookupArt(ArtRequest {
             key: key.clone(),
             artist: "Ann".into(),
-            name: "Alpha".into()
+            album: "Album A".into(),
+            name: "Alpha".into(),
         })));
         let fx = reduce(
             &mut a,
@@ -667,6 +684,66 @@ mod tests {
             })),
         );
         assert!(a.status.shuffle);
+    }
+
+    #[test]
+    fn ctrl_c_quits_from_anywhere() {
+        let mut a = app();
+        reduce(&mut a, key('?'));
+        let fx = reduce(
+            &mut a,
+            Action::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+        );
+        assert_eq!(fx, vec![Effect::Quit]);
+        let mut b = app();
+        reduce(&mut b, key('/'));
+        let fx = reduce(
+            &mut b,
+            Action::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+        );
+        assert_eq!(fx, vec![Effect::Quit]);
+    }
+
+    #[test]
+    fn rows_are_cached_until_something_relevant_changes() {
+        let mut a = app();
+        reduce(&mut a, key('/'));
+        reduce(&mut a, key('g'));
+        reduce(&mut a, key('a'));
+        let n0 = a.rank_calls();
+        let r1 = a.rows(Tab::Songs);
+        let r2 = a.rows(Tab::Songs);
+        assert_eq!(r1, r2);
+        assert_eq!(a.rank_calls(), n0 + 1, "second call should hit the cache");
+        reduce(
+            &mut a,
+            Action::Bridge(Event::Library(vec![track("9", "Gala", "Zed", "Z")])),
+        );
+        a.rows(Tab::Songs);
+        assert_eq!(
+            a.rank_calls(),
+            n0 + 2,
+            "library change must invalidate the cache"
+        );
+        reduce(&mut a, key('m'));
+        a.rows(Tab::Songs);
+        assert_eq!(
+            a.rank_calls(),
+            n0 + 3,
+            "filter change must invalidate the cache"
+        );
+    }
+
+    #[test]
+    fn playlists_loaded_flag_flips_on_event() {
+        let mut a = App::new(
+            Theme::builtin("terminal").unwrap(),
+            VizSettings::default(),
+            false,
+        );
+        assert!(!a.playlists_loaded);
+        reduce(&mut a, Action::Bridge(Event::Playlists(vec![])));
+        assert!(a.playlists_loaded);
     }
 
     #[test]

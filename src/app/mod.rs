@@ -52,7 +52,21 @@ pub struct App {
     pub art_key: Option<String>,
     pub music_pid: Option<u32>,
     pub should_quit: bool,
+    /// False until the bulk playlist dump arrives (it takes a few seconds).
+    pub playlists_loaded: bool,
     filter: Filter,
+    /// Rows for the last (tab, drill, filter, generation); avoids re-running the
+    /// fuzzy matcher over the whole library on every animation frame.
+    rows_cache: Option<(RowsKey, Vec<Row>)>,
+    rows_gen: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RowsKey {
+    tab: Tab,
+    drill: Drill,
+    filter: String,
+    generation: u64,
 }
 
 impl App {
@@ -81,7 +95,10 @@ impl App {
             art_key: None,
             music_pid: None,
             should_quit: false,
+            playlists_loaded: false,
             filter: Filter::new(),
+            rows_cache: None,
+            rows_gen: 0,
         }
     }
 
@@ -121,8 +138,37 @@ impl App {
         self.message = Some((msg.into(), Instant::now()));
     }
 
-    /// Visible rows for `tab`, honouring drill-down and the filter.
+    /// Call whenever library, playlists or the play context change.
+    pub fn invalidate_rows(&mut self) {
+        self.rows_gen = self.rows_gen.wrapping_add(1);
+    }
+
+    /// How many times the fuzzy matcher has run (for cache tests).
+    #[cfg(test)]
+    pub fn rank_calls(&self) -> usize {
+        self.filter.rank_calls
+    }
+
+    /// Visible rows for `tab`, honouring drill-down and the filter. Cached.
     pub fn rows(&mut self, tab: Tab) -> Vec<Row> {
+        let view = &self.views[tab.index()];
+        let key = RowsKey {
+            tab,
+            drill: view.drill,
+            filter: view.filter.clone(),
+            generation: self.rows_gen,
+        };
+        if let Some((k, rows)) = &self.rows_cache
+            && *k == key
+        {
+            return rows.clone();
+        }
+        let rows = self.compute_rows(tab);
+        self.rows_cache = Some((key, rows.clone()));
+        rows
+    }
+
+    fn compute_rows(&mut self, tab: Tab) -> Vec<Row> {
         let Some(lib) = self.library.as_ref() else {
             return Vec::new();
         };

@@ -12,6 +12,8 @@ pub struct FakeBridge {
     pub status: PlayerStatus,
     /// Every mutating call, in order, for assertions.
     pub calls: Vec<String>,
+    /// When true, `status()` fails until `ensure_running()` is called.
+    pub fail_status: bool,
 }
 
 impl FakeBridge {
@@ -38,6 +40,11 @@ pub fn track(id: &str, name: &str, artist: &str, album: &str) -> Track {
 }
 
 impl MusicBridge for FakeBridge {
+    fn ensure_running(&mut self) -> Result<()> {
+        self.calls.push("ensure_running".into());
+        self.fail_status = false;
+        Ok(())
+    }
     fn load_library(&mut self) -> Result<Vec<Track>> {
         Ok(self.tracks.clone())
     }
@@ -45,6 +52,9 @@ impl MusicBridge for FakeBridge {
         Ok(self.playlists.clone())
     }
     fn status(&mut self) -> Result<PlayerStatus> {
+        if self.fail_status {
+            anyhow::bail!("osascript failed: Music got an error: Connection is invalid");
+        }
         Ok(self.status.clone())
     }
     fn music_pid(&mut self) -> Result<u32> {

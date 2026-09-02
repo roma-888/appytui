@@ -78,7 +78,8 @@ const SEEK: &str = "Music.playerPosition = ARGS.seconds; \"ok\";";
 const SET_VOLUME: &str = "Music.soundVolume = ARGS.volume; \"ok\";";
 const SET_SHUFFLE: &str = "Music.shuffleEnabled = ARGS.on; \"ok\";";
 const SET_REPEAT: &str = "Music.songRepeat = ARGS.mode; \"ok\";";
-const LAUNCH: &str = "if (!Music.running()) { Music.activate(); } \"ok\";";
+// `launch` starts Music.app in the background; `activate` would steal focus from the terminal.
+const LAUNCH: &str = "if (!Music.running()) { Music.launch(); } \"ok\";";
 
 /// Run a JXA script with `args` available as the `ARGS` constant. Kills the
 /// process after `timeout`.
@@ -162,6 +163,9 @@ pub fn parse_status(json: &str) -> Result<PlayerStatus> {
 }
 
 impl MusicBridge for JxaBridge {
+    fn ensure_running(&mut self) -> Result<()> {
+        JxaBridge::ensure_running(self)
+    }
     fn load_library(&mut self) -> Result<Vec<Track>> {
         parse_library(&self.run(LIBRARY, json!({}))?)
     }
