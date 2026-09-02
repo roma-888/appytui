@@ -388,6 +388,7 @@ mod tests {
             Action::Bridge(Event::Status(PlayerStatus {
                 state: PlayerState::Playing,
                 track_id: Some(TrackId("3".into())),
+                track: None,
                 position_secs: 10.0,
                 volume: 50,
                 shuffle: false,
@@ -513,6 +514,22 @@ mod tests {
         assert!(a.art.is_some());
         reduce(&mut a, Action::Art(ArtResult { key: "stale".into(), image: Some(image::RgbImage::new(1, 1)) }));
         assert_eq!(a.art.as_ref().map(|(k, _)| k.as_str()), Some(key.as_str()));
+    }
+
+    #[test]
+    fn streamed_track_outside_library_still_shows_as_current() {
+        let mut a = app();
+        let snapshot = track("stream1", "Pretty Pure", "whenyoung", "Single");
+        reduce(
+            &mut a,
+            Action::Bridge(Event::Status(PlayerStatus {
+                state: PlayerState::Playing,
+                track_id: Some(TrackId("stream1".into())),
+                track: Some(snapshot),
+                ..PlayerStatus::default()
+            })),
+        );
+        assert_eq!(a.current_track().map(|t| t.name.as_str()), Some("Pretty Pure"));
     }
 
     #[test]

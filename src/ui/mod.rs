@@ -96,6 +96,7 @@ mod tests {
             Action::Bridge(Event::Status(PlayerStatus {
                 state: PlayerState::Playing,
                 track_id: Some(TrackId("1".into())),
+                track: None,
                 position_secs: 30.0,
                 volume: 80,
                 shuffle: true,

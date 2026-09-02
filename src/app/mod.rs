@@ -81,9 +81,11 @@ impl App {
         &mut self.views[self.tab.index()]
     }
 
+    /// The playing track: the library entry when it has one, else the
+    /// snapshot Music.app reported (streamed tracks are often not in the library).
     pub fn current_track(&self) -> Option<&Track> {
         let id = self.status.track_id.as_ref()?;
-        self.library.as_ref()?.get(id)
+        self.library.as_ref().and_then(|l| l.get(id)).or(self.status.track.as_ref())
     }
 
     /// Player position interpolated from the last status poll.

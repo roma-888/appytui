@@ -44,9 +44,18 @@ JSON.stringify(out);
 
 const STATUS: &str = r#"
 const st = Music.playerState();
-let track_id = null;
-if (st !== "stopped") { try { track_id = Music.currentTrack.persistentID(); } catch (e) {} }
-JSON.stringify({ state: st, track_id, position_secs: Music.playerPosition() || 0,
+let track_id = null, track = null;
+if (st !== "stopped") {
+  try {
+    const t = Music.currentTrack;
+    track_id = t.persistentID();
+    // Snapshot so streamed tracks that are not in the library still show up.
+    track = { id: track_id, name: t.name() || "", artist: t.artist() || "", album: t.album() || "",
+      album_artist: t.albumArtist() || "", duration_secs: t.duration() || 0,
+      track_number: t.trackNumber() || 0, disc_number: t.discNumber() || 0, year: t.year() || 0 };
+  } catch (e) {}
+}
+JSON.stringify({ state: st, track_id, track, position_secs: Music.playerPosition() || 0,
   volume: Music.soundVolume(), shuffle: Music.shuffleEnabled(), repeat: Music.songRepeat() });
 "#;
 

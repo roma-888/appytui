@@ -73,6 +73,10 @@ impl RepeatMode {
 pub struct PlayerStatus {
     pub state: PlayerState,
     pub track_id: Option<TrackId>,
+    /// Metadata snapshot of the current track. Streamed Apple Music tracks are
+    /// often not in the library, so this is the fallback for the now-playing pane.
+    #[serde(default)]
+    pub track: Option<Track>,
     pub position_secs: f64,
     pub volume: u8,
     pub shuffle: bool,
@@ -84,6 +88,7 @@ impl Default for PlayerStatus {
         Self {
             state: PlayerState::Stopped,
             track_id: None,
+            track: None,
             position_secs: 0.0,
             volume: 100,
             shuffle: false,
@@ -110,6 +115,13 @@ mod tests {
         assert_eq!(s.state, PlayerState::Paused);
         assert_eq!(s.track_id, Some(TrackId("EFF3D244B345952B".into())));
         assert_eq!(s.repeat, RepeatMode::Off);
+    }
+
+    #[test]
+    fn status_carries_track_snapshot_when_present() {
+        let json = r#"{"state":"playing","track_id":"X","track":{"id":"X","name":"Pretty Pure","artist":"whenyoung","album":"Single","album_artist":"","duration_secs":237.8,"track_number":0,"disc_number":0,"year":0},"position_secs":1,"volume":100,"shuffle":false,"repeat":"off"}"#;
+        let s: PlayerStatus = serde_json::from_str(json).unwrap();
+        assert_eq!(s.track.as_ref().map(|t| t.name.as_str()), Some("Pretty Pure"));
     }
 
     #[test]
