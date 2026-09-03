@@ -5,7 +5,7 @@ use std::time::Instant;
 use super::App;
 use super::library::Library;
 use super::queue::PlayContext;
-use super::reducer::{Effect, art_for_current_track};
+use super::reducer::{Effect, art_for_current_track, set_playing};
 use super::views::{Drill, Row, Tab};
 use crate::music::Command;
 use crate::music::model::{PlayerState, TrackId};
@@ -156,12 +156,12 @@ pub fn switch_now(app: &mut App) -> Vec<Effect> {
     app.context.index = (app.context.index + 1) % len;
     let now = Instant::now();
     app.status.track_id = Some(app.context.track_ids[app.context.index].clone());
-    app.status.state = PlayerState::Playing;
     app.status.position_secs = 0.0;
     app.status_at = now;
     app.optimistic_at = Some(now);
     app.invalidate_rows();
     let mut effects = vec![Effect::Send(Command::PlayPrepared)];
+    effects.extend(set_playing(app, true));
     effects.extend(art_for_current_track(app));
     effects
 }
@@ -262,11 +262,11 @@ pub fn play_list(app: &mut App, list: Vec<TrackId>, index: usize) -> Vec<Effect>
         .map(|t| t.name.clone())
         .unwrap_or_default();
     app.status.track_id = Some(first);
-    app.status.state = PlayerState::Playing;
     app.status.position_secs = 0.0;
     app.status_at = Instant::now();
     app.notify(format!("Starting {name}…"));
     let mut effects = vec![Effect::Send(Command::PlayTracks(ids))];
+    effects.extend(set_playing(app, true));
     effects.extend(art_for_current_track(app));
     effects
 }
@@ -285,6 +285,7 @@ mod tests {
     use crate::music::Command;
     use crate::music::Event;
     use crate::music::model::{PlayerState, PlayerStatus, TrackId};
+    use crate::viz::Control;
 
     #[test]
     fn enter_on_song_plays_onward_from_that_row() {
@@ -425,7 +426,7 @@ mod tests {
         reduce(&mut a, code(KeyCode::Enter));
         let fx = reduce(&mut a, code(KeyCode::Enter));
         let ids = vec![TrackId("3".into()), TrackId("1".into())];
-        assert_eq!(fx, vec![Effect::Send(Command::PlayTracks(ids.clone()))]);
+        assert_eq!(sent_tracks(&fx), ids.clone());
         assert_eq!(a.context.track_ids, ids);
         reduce(&mut a, key('6'));
         assert_eq!(a.rows(Tab::Queue), vec![Row::Track(0)]);
@@ -440,7 +441,7 @@ mod tests {
         let fx = reduce(&mut a, code(KeyCode::Enter));
         // Album A is [1, 2]; picking 2 rotates it so 2 plays first, then 1.
         let ids = vec![TrackId("2".into()), TrackId("1".into())];
-        assert_eq!(fx, vec![Effect::Send(Command::PlayTracks(ids.clone()))]);
+        assert_eq!(sent_tracks(&fx), ids.clone());
         assert_eq!(a.context.track_ids, ids);
         assert_eq!(a.context.index, 0);
     }
@@ -452,12 +453,12 @@ mod tests {
         reduce(&mut a, code(KeyCode::Enter));
         let fx = reduce(&mut a, code(KeyCode::Enter));
         let ids = vec![TrackId("1".into()), TrackId("2".into())];
-        assert_eq!(fx, vec![Effect::Send(Command::PlayTracks(ids))]);
+        assert_eq!(sent_tracks(&fx), ids.clone());
         reduce(&mut a, key('6'));
         assert_eq!(a.rows(Tab::Queue), vec![Row::Track(1)]);
         let fx = reduce(&mut a, code(KeyCode::Enter));
         let rotated = vec![TrackId("2".into()), TrackId("1".into())];
-        assert_eq!(fx, vec![Effect::Send(Command::PlayTracks(rotated.clone()))]);
+        assert_eq!(sent_tracks(&fx), rotated.clone());
         assert_eq!(a.context.track_ids, rotated);
         assert_eq!(a.context.index, 0);
     }
@@ -515,6 +516,40 @@ mod tests {
             [Effect::Send(Command::PrepareTracks(ids))] => ids.clone(),
             other => panic!("expected one PrepareTracks, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn enter_while_paused_tells_the_visualizer_playback_started() {
+        let mut a = playing_app(10.0, 1);
+        a.status.state = PlayerState::Paused;
+        let fx = reduce(&mut a, code(KeyCode::Enter));
+        assert!(fx.contains(&Effect::Viz(Control::Playing(true))), "{fx:?}");
+        // Music.app confirming it must not send the control again.
+        let fx = poll(&mut a, PlayerState::Playing, 0.5, "1");
+        assert!(
+            !fx.iter()
+                .any(|e| matches!(e, Effect::Viz(Control::Playing(_)))),
+            "{fx:?}"
+        );
+    }
+
+    #[test]
+    fn enter_while_playing_does_not_repeat_the_visualizer_control() {
+        let mut a = playing_app(10.0, 1);
+        let fx = reduce(&mut a, code(KeyCode::Enter));
+        assert!(
+            !fx.iter()
+                .any(|e| matches!(e, Effect::Viz(Control::Playing(_)))),
+            "{fx:?}"
+        );
+    }
+
+    #[test]
+    fn queue_switch_after_a_stop_tells_the_visualizer() {
+        let mut a = pending_near_end(100.0);
+        let fx = poll(&mut a, PlayerState::Stopped, 0.0, "1");
+        assert!(fx.contains(&Effect::Send(Command::PlayPrepared)), "{fx:?}");
+        assert!(fx.contains(&Effect::Viz(Control::Playing(true))), "{fx:?}");
     }
 
     #[test]

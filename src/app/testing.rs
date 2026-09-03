@@ -55,11 +55,18 @@ pub fn big_app() -> App {
     app
 }
 
+/// The one PlayTracks command among `fx` (other effects, such as the
+/// visualizer control or an art request, may accompany it).
 pub fn sent_tracks(fx: &[Effect]) -> Vec<TrackId> {
-    match fx {
-        [Effect::Send(Command::PlayTracks(ids))] => ids.clone(),
-        other => panic!("expected one PlayTracks, got {other:?}"),
-    }
+    let mut sent = fx.iter().filter_map(|e| match e {
+        Effect::Send(Command::PlayTracks(ids)) => Some(ids.clone()),
+        _ => None,
+    });
+    let first = sent
+        .next()
+        .unwrap_or_else(|| panic!("expected a PlayTracks, got {fx:?}"));
+    assert!(sent.next().is_none(), "more than one PlayTracks in {fx:?}");
+    first
 }
 
 pub fn id(n: usize) -> TrackId {

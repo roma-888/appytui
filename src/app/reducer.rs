@@ -162,6 +162,19 @@ fn seek_by(app: &mut App, delta: f64) -> Vec<Effect> {
     vec![Effect::Send(Command::Seek(pos))]
 }
 
+/// Set the local play state ahead of Music.app confirming it, and tell the
+/// visualizer if that is a change: it only animates while told playback is on,
+/// and the later status poll cannot see a transition the app already applied.
+pub fn set_playing(app: &mut App, playing: bool) -> Option<Effect> {
+    let was = app.status.state == PlayerState::Playing;
+    app.status.state = if playing {
+        PlayerState::Playing
+    } else {
+        PlayerState::Paused
+    };
+    (was != playing).then_some(Effect::Viz(Control::Playing(playing)))
+}
+
 /// Request album art when the current track's album differs from the one
 /// shown, and clear the art when nothing is playing.
 pub fn art_for_current_track(app: &mut App) -> Option<Effect> {
@@ -255,23 +268,15 @@ fn on_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Char(' ') => {
             // Flip the local clock now; the poll after the command confirms it.
             let now = Instant::now();
-            let playing = match app.status.state {
-                PlayerState::Playing => {
-                    app.status.position_secs = app.position_now();
-                    app.status.state = PlayerState::Paused;
-                    false
-                }
-                _ => {
-                    app.status.state = PlayerState::Playing;
-                    true
-                }
-            };
+            let playing = app.status.state != PlayerState::Playing;
+            if !playing {
+                app.status.position_secs = app.position_now();
+            }
+            let mut effects = vec![Effect::Send(Command::PlayPause)];
+            effects.extend(set_playing(app, playing));
             app.status_at = now;
             app.optimistic_at = Some(now);
-            return vec![
-                Effect::Send(Command::PlayPause),
-                Effect::Viz(Control::Playing(playing)),
-            ];
+            return effects;
         }
         KeyCode::Char('n') => {
             // The edited queue is waiting in the idle playlist; start it now.
