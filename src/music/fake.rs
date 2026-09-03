@@ -14,6 +14,8 @@ pub struct FakeBridge {
     pub calls: Vec<String>,
     /// When true, `status()` fails until `ensure_running()` is called.
     pub fail_status: bool,
+    /// When true, `prepare_tracks()` fails.
+    pub fail_prepare: bool,
     pub prepared: Vec<TrackId>,
 }
 
@@ -78,6 +80,9 @@ impl MusicBridge for FakeBridge {
         Ok(())
     }
     fn prepare_tracks(&mut self, tracks: &[TrackId]) -> Result<()> {
+        if self.fail_prepare {
+            anyhow::bail!("osascript timed out");
+        }
         let ids: Vec<&str> = tracks.iter().map(|t| t.0.as_str()).collect();
         self.calls
             .push(format!("prepare_tracks [{}]", ids.join(",")));

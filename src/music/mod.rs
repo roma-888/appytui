@@ -51,6 +51,16 @@ pub enum Command {
     Shutdown,
 }
 
+/// Which kind of command failed, so the app can undo what it assumed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FailedCommand {
+    /// A play or queue switch: the expected track will never be confirmed.
+    Play,
+    /// A queue preparation: the idle playlist cannot be switched to.
+    Prepare,
+    Other,
+}
+
 /// Sent from the bridge worker to the app.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
@@ -58,5 +68,8 @@ pub enum Event {
     Playlists(Vec<Playlist>),
     Status(PlayerStatus),
     MusicPid(u32),
+    /// A command failed; the message is shown and the app undoes its optimism.
+    Failed(FailedCommand, String),
+    /// Anything else worth showing in the status line.
     Error(String),
 }

@@ -6,15 +6,15 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::library::Library;
 use super::playback::{
-    dequeue, enqueue, maybe_switch, on_track_changed_while_pending, play_all, play_list,
-    switch_now, track_ids,
+    dequeue, enqueue, is_long_list, maybe_switch, on_track_changed_while_pending, play_all,
+    play_list, switch_now, track_ids,
 };
 use super::views::{Drill, Row, Tab};
 use super::{App, MESSAGE_TTL, OPTIMISTIC_WINDOW, PLAY_CONFIRM_WINDOW};
 use crate::art::{ArtRequest, ArtResult};
 use crate::config::Orientation;
 use crate::music::model::PlayerState;
-use crate::music::{Command, Event};
+use crate::music::{Command, Event, FailedCommand};
 use crate::viz::{Control, VizEvent};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -93,13 +93,16 @@ fn on_bridge(app: &mut App, ev: Event) -> Vec<Effect> {
                 .is_some_and(|t| t.elapsed() < OPTIMISTIC_WINDOW);
             // Until Music.app reports the track the app just started, polls
             // naming anything else were taken before the command landed.
+            let mut confirmed = false;
             if let Some((expected, since)) = &app.expecting {
                 if since.elapsed() < PLAY_CONFIRM_WINDOW && s.track_id.as_ref() != Some(expected) {
                     return Vec::new();
                 }
+                confirmed = s.track_id.as_ref() == Some(expected);
                 app.expecting = None;
             }
             let previous_track = app.status.track_id.clone();
+            let previous_index = app.context.index;
             let was_playing = app.status.state == PlayerState::Playing;
             if let Some(id) = &s.track_id {
                 let before = app.context.index;
@@ -116,10 +119,13 @@ fn on_bridge(app: &mut App, ev: Event) -> Vec<Effect> {
             }
             // Keep the local clock (state, position and its timestamp) when the
             // poll predates a local play/pause/seek, or when it merely confirms
-            // a running clock within tolerance. Anything else re-anchors.
+            // a running clock within tolerance. Anything else re-anchors, and
+            // so does the poll confirming a track the app started: the local
+            // clock began at the key press, Music.app's at the actual start.
             let same_track = s.track_id == app.status.track_id;
             let local_playing = app.status.state == PlayerState::Playing;
             let keep_clock = same_track
+                && !confirmed
                 && if optimistic {
                     s.state != app.status.state || local_playing
                 } else {
@@ -140,7 +146,7 @@ fn on_bridge(app: &mut App, ev: Event) -> Vec<Effect> {
             }
             effects.extend(art_for_current_track(app));
             if app.status.track_id != previous_track || app.status.state == PlayerState::Stopped {
-                effects.extend(on_track_changed_while_pending(app));
+                effects.extend(on_track_changed_while_pending(app, previous_index));
             }
             return effects;
         }
@@ -148,11 +154,17 @@ fn on_bridge(app: &mut App, ev: Event) -> Vec<Effect> {
             app.music_pid = Some(pid);
             return vec![Effect::Viz(Control::MusicPid(pid))];
         }
-        Event::Error(e) => {
-            // A failed play never gets confirmed; believe the polls again.
-            app.expecting = None;
-            app.notify(e)
+        Event::Failed(what, message) => {
+            match what {
+                // Never going to be confirmed; believe the polls again.
+                FailedCommand::Play => app.expecting = None,
+                // Nothing usable in the idle playlist; don't switch to it.
+                FailedCommand::Prepare => app.pending_requeue = false,
+                FailedCommand::Other => {}
+            }
+            app.notify(message)
         }
+        Event::Error(e) => app.notify(e),
     }
     Vec::new()
 }
@@ -336,11 +348,9 @@ fn on_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
 
 fn on_filter_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
     match key.code {
-        KeyCode::Esc => {
-            app.editing_filter = false;
-            app.view_mut().filter.clear();
-            app.view_mut().cursor = 0;
-        }
+        // Esc leaves editing with the query in place so the list keys work on
+        // the results; Esc again (outside editing) clears it.
+        KeyCode::Esc => app.editing_filter = false,
         KeyCode::Enter => {
             app.editing_filter = false;
             if app.tab == Tab::Search {
@@ -388,7 +398,8 @@ fn on_enter(app: &mut App) -> Vec<Effect> {
                 track_ids(lib, &rows)
             };
             let index = list.iter().position(|id| *id == track_id).unwrap_or(0);
-            play_list(app, list, index)
+            let long = is_long_list(app);
+            play_list(app, list, index, long)
         }
     }
 }
@@ -514,6 +525,31 @@ mod tests {
         for c in q.chars() {
             reduce(a, key(c));
         }
+    }
+
+    #[test]
+    fn esc_leaves_filter_editing_with_the_query_kept_and_keys_live() {
+        let mut a = app();
+        reduce(&mut a, key('5'));
+        type_query(&mut a, "ann");
+        reduce(&mut a, code(KeyCode::Esc));
+        assert!(!a.editing_filter);
+        assert_eq!(a.view().filter, "ann");
+        assert_eq!(a.rows(Tab::Search).len(), 4);
+        let rows = a.rows(Tab::Search);
+        let first_track = rows
+            .iter()
+            .position(|r| matches!(r, Row::Track(_)))
+            .unwrap();
+        for _ in 0..first_track {
+            reduce(&mut a, key('j'));
+        }
+        // `e` now acts on the result instead of typing into the query.
+        assert!(!sent_tracks(&reduce(&mut a, key('e'))).is_empty());
+        assert_eq!(a.view().filter, "ann");
+        // A second Esc clears the query as before.
+        reduce(&mut a, code(KeyCode::Esc));
+        assert_eq!(a.view().filter, "");
     }
 
     #[test]

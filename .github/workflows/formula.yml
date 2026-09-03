@@ -35,7 +35,10 @@ jobs:
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*.sha256' --dir sums
           arm=$(cut -d' ' -f1 "sums/appytui-$TAG-aarch64-apple-darwin.tar.gz.sha256")
           x86=$(cut -d' ' -f1 "sums/appytui-$TAG-x86_64-apple-darwin.tar.gz.sha256")
-          [ ${#arm} -eq 64 ] && [ ${#x86} -eq 64 ]
+          if [ ${#arm} -ne 64 ] || [ ${#x86} -ne 64 ]; then
+            echo "bad checksums: arm='$arm' x86='$x86'" >&2
+            exit 1
+          fi
           {
             echo "version=${TAG#v}"
             echo "arm=$arm"

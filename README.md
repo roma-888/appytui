@@ -43,7 +43,7 @@ app, not to appytui. If you decline audio recording the visualizer runs simulate
 | ← / → | seek 5 s |
 | + / - | volume |
 | s / r | shuffle / repeat |
-| / then Esc | filter / clear |
+| / | filter the list; Esc stops typing, Esc again clears |
 | v / V / w | visualizer on-off / orientation / waveform |
 | ? / q, Ctrl-C | help / quit |
 

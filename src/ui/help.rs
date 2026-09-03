@@ -20,7 +20,7 @@ pub const KEYS: &[(&str, &str)] = &[
     ("← / →", "seek −5 s / +5 s"),
     ("+ / -", "volume ±5"),
     ("s / r", "toggle shuffle / cycle repeat"),
-    ("/", "filter list (Esc clears)"),
+    ("/", "filter list (Esc: done typing, Esc again clears)"),
     ("v / V / w", "toggle visualizer / orientation / waveform"),
     ("?", "this help"),
     ("q", "quit"),

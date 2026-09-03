@@ -137,8 +137,12 @@ playlist dump and the playlist fill); on a timeout or a dead process the
 server is killed and respawned on the next call, and the failure is reported
 like any other error. The bridge worker polls
 `status()` once per second, re-polls immediately after any command, and only
-emits an event when the status changed. It also reports Music.app's PID for
-the visualizer tap.
+emits an event when the status changed, except right after a command, when
+it always reports so the app's optimistic state is corrected even if Music.app
+did nothing. A failed command is reported as `Event::Failed(kind, message)`
+so the app can undo the matching assumption (a failed play stops waiting for
+confirmation; a failed preparation cancels the pending switch). It also
+reports Music.app's PID for the visualizer tap.
 
 `load_playlists` runs one bulk JXA script that returns every user playlist
 with its track persistent IDs, so the Playlists tab fills in one call. It
@@ -194,7 +198,9 @@ Albums are grouped by `(album_artist or artist, album)` and artists by
 case-insensitive with a leading "The " ignored.
 
 Filtering uses `nucleo-matcher` over `"name artist album"` for the current
-list. The filter is per tab and cleared with `Esc`. The Search tab ranks
+list. The filter is per tab; `Esc` while typing ends editing and keeps the
+query so the list keys act on the results, and `Esc` again clears it. The
+Search tab ranks
 artists, albums and tracks together and renders each row with its kind; it
 shows nothing until something is typed. Enter on an album or artist row opens
 it on any tab (an opened collection lists its tracks whatever the tab), and
@@ -211,7 +217,11 @@ before the chosen one. Songs and Search are long, so they send a window of
 `WINDOW` (25) tracks: the chosen one and the next 24, or with shuffle on the
 chosen one plus 24 sampled at random from the visible list so shuffle spans
 the whole list. The chosen track is shown as playing immediately; the next
-status poll corrects it if Music.app disagrees. `a` plays the list under the cursor from its first track: the
+status poll corrects it if Music.app disagrees. Every play records the track
+it expects; until a poll names it (or `PLAY_CONFIRM_WINDOW`, 10 s, passes, or
+the play fails) polls naming anything else are ignored as taken before the
+command, and the confirming poll re-anchors the clock to Music.app's position.
+`a` plays the list under the cursor from its first track: the
 collection itself on an album, artist or playlist row, otherwise the visible
 list. On each status event the index is re-synced by locating the reported
 track ID in the context (nearest occurrence after the old index, else first).
@@ -231,9 +241,11 @@ less remain of the current track, the app plays the prepared playlist
 (`play_prepared`), advances the context index, shows the next track as playing,
 and remembers the track it switched from so a poll still naming it is ignored
 for the optimistic window. `n` while pending does the same at once. If a poll
-shows Music.app moved to another track on the queue before the switch, the
-queue is re-prepared from there; if it left the queue or stopped, the prepared
-playlist is started immediately. Any fresh play clears the pending state.
+shows Music.app moved to the track the queue expected next before the switch,
+the queue is re-prepared from there; if it played anything else (its old
+order), left the queue, or stopped, the prepared playlist is started
+immediately. A failed preparation (`Event::Failed(Prepare, _)`) cancels the
+pending switch. Any fresh play clears the pending state.
 Playing a playlist with shuffle on starts at a random track, so `play` turns
 shuffle off around it and back on, which plays the first track then shuffles.
 

@@ -28,9 +28,21 @@ pub fn play_all(app: &mut App) -> Vec<Effect> {
     let Some(lib) = app.library.as_ref() else {
         return Vec::new();
     };
-    let list = collection_tracks(app, rows.get(app.view().cursor))
-        .unwrap_or_else(|| track_ids(lib, &rows));
-    play_list(app, list, 0)
+    // A collection is sent whole; the visible Songs or Search list is long.
+    match collection_tracks(app, rows.get(app.view().cursor)) {
+        Some(list) => play_list(app, list, 0, false),
+        None => {
+            let list = track_ids(lib, &rows);
+            let long = is_long_list(app);
+            play_list(app, list, 0, long)
+        }
+    }
+}
+
+/// Songs and top-level Search results are long lists that get a window; an
+/// opened album or artist, or a collection row, is not.
+pub fn is_long_list(app: &App) -> bool {
+    matches!(app.tab, Tab::Songs | Tab::Search) && app.view().drill == Drill::Top
 }
 
 /// The tracks of an album, artist or playlist row; `None` for anything else.
@@ -68,7 +80,7 @@ pub fn enqueue(app: &mut App, next: bool) -> Vec<Effect> {
         return Vec::new();
     }
     if app.context.track_ids.is_empty() || app.status.track_id.is_none() {
-        return play_list(app, tracks, 0);
+        return play_list(app, tracks, 0, false);
     }
     let what = describe(app, &tracks);
     // Music.app picks the order under shuffle, so "next" degrades to "later".
@@ -113,7 +125,11 @@ pub fn dequeue(app: &mut App) -> Vec<Effect> {
     let removed = app.context.track_ids.remove(pos);
     let what = describe(app, std::slice::from_ref(&removed));
     app.notify(format!("Removed from queue: {what}"));
-    requeue(app)
+    let effects = requeue(app);
+    // Keep the cursor on a real row so the next key acts on what is shown.
+    let len = app.rows(Tab::Queue).len();
+    app.view_mut().cursor = cursor.min(len.saturating_sub(1));
+    effects
 }
 
 fn describe(app: &App, tracks: &[TrackId]) -> String {
@@ -187,18 +203,17 @@ pub fn maybe_switch(app: &mut App) -> Vec<Effect> {
 }
 
 /// A status poll changed the track (or stopped) while an edited queue was
-/// waiting. If Music.app moved along our queue, re-prepare from the new
-/// track; if it left the queue or stopped, start the prepared one now.
-pub fn on_track_changed_while_pending(app: &mut App) -> Vec<Effect> {
+/// waiting. If Music.app moved to the track our queue expected next, just
+/// re-prepare from there; if it played something else (its old order), left
+/// the queue, or stopped, start the prepared one now.
+pub fn on_track_changed_while_pending(app: &mut App, previous_index: usize) -> Vec<Effect> {
     if !app.pending_requeue {
         return Vec::new();
     }
-    let on_queue = app
-        .status
-        .track_id
-        .as_ref()
-        .is_some_and(|id| app.context.track_ids.contains(id));
-    if app.status.state == PlayerState::Stopped || !on_queue {
+    let len = app.context.track_ids.len();
+    let expected_next = (len > 0).then(|| &app.context.track_ids[(previous_index + 1) % len]);
+    let as_expected = app.status.track_id.as_ref() == expected_next;
+    if app.status.state == PlayerState::Stopped || !as_expected {
         switch_now(app)
     } else {
         requeue(app)
@@ -220,15 +235,12 @@ pub fn track_ids(lib: &Library, rows: &[Row]) -> Vec<TrackId> {
 /// Songs and Search are long, so only a window is sent: the next `WINDOW`
 /// tracks, or with shuffle on the chosen track plus a random sample of the
 /// rest so shuffle still spans the whole list.
-pub fn play_list(app: &mut App, list: Vec<TrackId>, index: usize) -> Vec<Effect> {
+pub fn play_list(app: &mut App, list: Vec<TrackId>, index: usize, long: bool) -> Vec<Effect> {
     if list.is_empty() {
         return Vec::new();
     }
     let index = index.min(list.len() - 1);
-    // Songs and Search results are long lists; an opened album or artist
-    // inside Search is not.
-    let long_list = matches!(app.tab, Tab::Songs | Tab::Search) && app.view().drill == Drill::Top;
-    let ids: Vec<TrackId> = if long_list {
+    let ids: Vec<TrackId> = if long {
         if app.status.shuffle {
             let mut others: Vec<usize> = (0..list.len()).filter(|&i| i != index).collect();
             let take = others.len().min(WINDOW - 1);
@@ -278,16 +290,15 @@ pub fn play_list(app: &mut App, list: Vec<TrackId>, index: usize) -> Vec<Effect>
 mod tests {
     use ratatui::crossterm::event::KeyCode;
 
-    use std::time::Instant;
+    use std::time::{Duration, Instant};
 
     use super::super::App;
     use super::super::reducer::{Action, Effect, reduce};
     use super::super::testing::*;
     use super::super::views::{Drill, Row, Tab};
     use crate::art::ArtRequest;
-    use crate::music::Command;
-    use crate::music::Event;
     use crate::music::model::{PlayerState, PlayerStatus, TrackId};
+    use crate::music::{Command, Event, FailedCommand};
     use crate::viz::Control;
 
     #[test]
@@ -598,11 +609,83 @@ mod tests {
         reduce(&mut a, code(KeyCode::Enter));
         reduce(
             &mut a,
-            Action::Bridge(Event::Error("osascript failed".into())),
+            Action::Bridge(Event::Failed(
+                FailedCommand::Play,
+                "osascript failed".into(),
+            )),
         );
         poll(&mut a, PlayerState::Paused, 11.0, "1");
         assert_eq!(a.status.track_id, Some(id(1)));
         assert_eq!(a.status.state, PlayerState::Paused);
+    }
+
+    #[test]
+    fn a_on_a_collection_row_in_search_results_sends_it_whole() {
+        let mut big = big_app();
+        reduce(&mut big, key('5'));
+        for c in "ann".chars() {
+            reduce(&mut big, key(c));
+        }
+        reduce(&mut big, code(KeyCode::Esc));
+        let rows = big.rows(Tab::Search);
+        let at = rows.iter().position(|r| *r == Row::Artist(0)).unwrap();
+        for _ in 0..at {
+            reduce(&mut big, key('j'));
+        }
+        assert_eq!(sent_tracks(&reduce(&mut big, key('a'))).len(), 60);
+        // And `e` with nothing playing sends the whole collection too.
+        let mut again = big_app();
+        reduce(&mut again, key('3'));
+        assert_eq!(sent_tracks(&reduce(&mut again, key('e'))).len(), 60);
+    }
+
+    #[test]
+    fn d_on_the_last_queue_row_moves_the_cursor_onto_the_new_last_row() {
+        let mut a = queued_app();
+        reduce(&mut a, key('e'));
+        reduce(&mut a, key('6'));
+        reduce(&mut a, key('j'));
+        assert_eq!(a.view().cursor, 1);
+        reduce(&mut a, key('d'));
+        assert_eq!(a.rows(Tab::Queue).len(), 1);
+        assert_eq!(a.view().cursor, 0);
+        // The remaining row is still actionable without moving first.
+        reduce(&mut a, key('d'));
+        assert!(a.rows(Tab::Queue).is_empty());
+        assert_eq!(a.context.track_ids, vec![id(1)]);
+    }
+
+    #[test]
+    fn confirming_poll_re_anchors_the_clock_to_music() {
+        let mut a = playing_app(10.0, 1);
+        reduce(&mut a, key('j'));
+        reduce(&mut a, code(KeyCode::Enter));
+        a.status_at = Instant::now() - Duration::from_millis(1200);
+        poll(&mut a, PlayerState::Playing, 0.2, "2");
+        assert!((a.position_now() - 0.2).abs() < 0.2, "{}", a.position_now());
+    }
+
+    #[test]
+    fn missed_boundary_switches_now_when_music_played_the_wrong_track() {
+        // Queue [1, 3, 2] after E; Music.app's old queue plays 2 instead of 3.
+        let mut a = queued_app();
+        reduce(&mut a, key('E'));
+        assert_eq!(a.context.track_ids, vec![id(1), id(3), id(2)]);
+        a.optimistic_at = None;
+        let fx = poll(&mut a, PlayerState::Playing, 0.5, "2");
+        assert!(fx.contains(&Effect::Send(Command::PlayPrepared)), "{fx:?}");
+        assert!(!a.pending_requeue);
+    }
+
+    #[test]
+    fn a_failed_prepare_cancels_the_pending_switch() {
+        let mut a = pending_near_end(0.2);
+        reduce(
+            &mut a,
+            Action::Bridge(Event::Failed(FailedCommand::Prepare, "timed out".into())),
+        );
+        assert!(!a.pending_requeue);
+        assert!(!reduce(&mut a, Action::Tick).contains(&Effect::Send(Command::PlayPrepared)));
     }
 
     #[test]
