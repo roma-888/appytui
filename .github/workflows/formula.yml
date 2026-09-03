@@ -72,11 +72,14 @@ jobs:
         run: |
           set -euo pipefail
           cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Prove TAP_TOKEN can write even when there is nothing to push, so a
+          # manual run on an existing release validates the credentials.
+          git push --dry-run origin HEAD
           if git diff --quiet; then
             echo "formula already at $VERSION"
             exit 0
           fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -am "appytui $VERSION"
           git push
