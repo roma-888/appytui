@@ -2,7 +2,7 @@
 
 Apple Music in your terminal, with a real audio spectrum visualizer.
 
-- Browse Songs, Albums, Artists, Playlists; fuzzy search; queue view
+- Browse Songs, Albums, Artists, Playlists; fuzzy search across songs, albums and artists; queue view and queue editing
 - Play, pause, skip, seek, volume, shuffle, repeat via Music.app
 - cava-style visualizer driven by a Core Audio tap on Music.app (no cava needed)
 - Album art as real images on Kitty-graphics terminals (Ghostty, kitty, WezTerm), Sixel or iTerm2, with a half-block fallback elsewhere

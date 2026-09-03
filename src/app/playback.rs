@@ -6,7 +6,7 @@ use super::App;
 use super::library::Library;
 use super::queue::PlayContext;
 use super::reducer::{Effect, art_for_current_track};
-use super::views::{Row, Tab};
+use super::views::{Drill, Row, Tab};
 use crate::music::Command;
 use crate::music::model::{PlayerState, TrackId};
 
@@ -224,7 +224,10 @@ pub fn play_list(app: &mut App, list: Vec<TrackId>, index: usize) -> Vec<Effect>
         return Vec::new();
     }
     let index = index.min(list.len() - 1);
-    let ids: Vec<TrackId> = if matches!(app.tab, Tab::Songs | Tab::Search) {
+    // Songs and Search results are long lists; an opened album or artist
+    // inside Search is not.
+    let long_list = matches!(app.tab, Tab::Songs | Tab::Search) && app.view().drill == Drill::Top;
+    let ids: Vec<TrackId> = if long_list {
         if app.status.shuffle {
             let mut others: Vec<usize> = (0..list.len()).filter(|&i| i != index).collect();
             let take = others.len().min(WINDOW - 1);
@@ -352,6 +355,15 @@ mod tests {
         reduce(&mut a, key('5'));
         for c in "ann".chars() {
             reduce(&mut a, key(c));
+        }
+        // Results mix artists, albums and tracks; move to the first track row.
+        let rows = a.rows(Tab::Search);
+        let first_track = rows
+            .iter()
+            .position(|r| matches!(r, Row::Track(_)))
+            .unwrap();
+        for _ in 0..first_track {
+            reduce(&mut a, code(KeyCode::Down));
         }
         let fx = reduce(&mut a, code(KeyCode::Enter));
         let sent = sent_tracks(&fx);

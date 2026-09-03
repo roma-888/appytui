@@ -70,8 +70,9 @@ pub enum Drill {
 pub struct TabView {
     pub cursor: usize,
     pub drill: Drill,
-    /// Cursor to restore when backing out of a drill-down.
+    /// Cursor and filter to restore when backing out of a drill-down.
     pub parent_cursor: usize,
+    pub parent_filter: String,
     pub filter: String,
 }
 

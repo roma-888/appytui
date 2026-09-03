@@ -242,7 +242,7 @@ fn on_key(app: &mut App, key: KeyEvent) -> Vec<Effect> {
             if view.drill != Drill::Top {
                 view.drill = Drill::Top;
                 view.cursor = view.parent_cursor;
-                view.filter.clear();
+                view.filter = std::mem::take(&mut view.parent_filter);
             }
         }
         KeyCode::Char('/') => {
@@ -386,9 +386,9 @@ fn on_enter(app: &mut App) -> Vec<Effect> {
 fn drill(app: &mut App, into: Drill) -> Vec<Effect> {
     let view = app.view_mut();
     view.parent_cursor = view.cursor;
+    view.parent_filter = std::mem::take(&mut view.filter);
     view.drill = into;
     view.cursor = 0;
-    view.filter.clear();
     Vec::new()
 }
 
@@ -497,6 +497,76 @@ mod tests {
         assert!(matches!(fx[..], [Effect::Send(Command::Seek(p))] if (p - 5.0).abs() < 0.1));
         let fx = reduce(&mut a, code(KeyCode::Left));
         assert!(matches!(fx[..], [Effect::Send(Command::Seek(p))] if p.abs() < 0.1));
+    }
+
+    fn type_query(a: &mut App, q: &str) {
+        for c in q.chars() {
+            reduce(a, key(c));
+        }
+    }
+
+    #[test]
+    fn search_ranks_albums_and_artists_with_tracks() {
+        let mut a = app();
+        reduce(&mut a, key('5'));
+        type_query(&mut a, "ann");
+        let rows = a.rows(Tab::Search);
+        assert_eq!(rows.len(), 4, "{rows:?}");
+        for want in [Row::Artist(0), Row::Album(0), Row::Track(0), Row::Track(1)] {
+            assert!(rows.contains(&want), "{rows:?} lacks {want:?}");
+        }
+    }
+
+    #[test]
+    fn search_enter_on_album_opens_it_and_backspace_restores_the_query() {
+        let mut a = app();
+        reduce(&mut a, key('5'));
+        type_query(&mut a, "album a");
+        let rows = a.rows(Tab::Search);
+        let at = rows.iter().position(|r| *r == Row::Album(0)).unwrap();
+        for _ in 0..at {
+            reduce(&mut a, code(KeyCode::Down));
+        }
+        reduce(&mut a, code(KeyCode::Enter));
+        assert_eq!(a.view().drill, Drill::Album(0));
+        assert_eq!(a.rows(Tab::Search), vec![Row::Track(0), Row::Track(1)]);
+        assert!(!a.editing_filter);
+        reduce(&mut a, code(KeyCode::Backspace));
+        assert_eq!(a.view().drill, Drill::Top);
+        assert_eq!(a.view().filter, "album a");
+        assert_eq!(a.rows(Tab::Search), rows);
+        assert_eq!(a.view().cursor, at);
+    }
+
+    #[test]
+    fn enter_inside_a_search_drill_plays_the_album_from_that_track() {
+        let mut a = app();
+        reduce(&mut a, key('5'));
+        type_query(&mut a, "album a");
+        let rows = a.rows(Tab::Search);
+        let at = rows.iter().position(|r| *r == Row::Album(0)).unwrap();
+        for _ in 0..at {
+            reduce(&mut a, code(KeyCode::Down));
+        }
+        reduce(&mut a, code(KeyCode::Enter));
+        reduce(&mut a, key('j'));
+        let fx = reduce(&mut a, code(KeyCode::Enter));
+        assert_eq!(sent_tracks(&fx), vec![id(2), id(1)]);
+    }
+
+    #[test]
+    fn backspace_restores_the_filter_on_the_albums_tab() {
+        let mut a = app();
+        reduce(&mut a, key('2'));
+        reduce(&mut a, key('/'));
+        type_query(&mut a, "z");
+        reduce(&mut a, code(KeyCode::Enter));
+        assert_eq!(a.rows(Tab::Albums), vec![Row::Album(1)]);
+        reduce(&mut a, code(KeyCode::Enter));
+        assert_eq!(a.view().drill, Drill::Album(1));
+        reduce(&mut a, code(KeyCode::Backspace));
+        assert_eq!(a.view().filter, "z");
+        assert_eq!(a.rows(Tab::Albums), vec![Row::Album(1)]);
     }
 
     #[test]

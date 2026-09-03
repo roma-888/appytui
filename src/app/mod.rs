@@ -199,41 +199,46 @@ impl App {
             return Vec::new();
         };
         let view = &self.views[tab.index()];
-        let unfiltered: Vec<Row> = match (tab, view.drill) {
-            (Tab::Songs, _) => (0..lib.tracks.len()).map(Row::Track).collect(),
-            (Tab::Albums, Drill::Top) => (0..lib.albums.len()).map(Row::Album).collect(),
-            (Tab::Albums, Drill::Album(a)) => lib.albums[a]
+        let albums = || (0..lib.albums.len()).map(Row::Album);
+        let artists = || (0..lib.artists.len()).map(Row::Artist);
+        let tracks = || (0..lib.tracks.len()).map(Row::Track);
+        // An opened album, artist or playlist lists its tracks on any tab.
+        let unfiltered: Vec<Row> = match (view.drill, tab) {
+            (Drill::Album(a), _) => lib.albums[a]
                 .tracks
                 .iter()
                 .map(|&i| Row::Track(i))
                 .collect(),
-            (Tab::Artists, Drill::Top) => (0..lib.artists.len()).map(Row::Artist).collect(),
-            (Tab::Artists, Drill::Artist(a)) => lib.artists[a]
+            (Drill::Artist(a), _) => lib.artists[a]
                 .tracks
                 .iter()
                 .map(|&i| Row::Track(i))
                 .collect(),
-            (Tab::Playlists, Drill::Top) => (0..self.playlists.len()).map(Row::Playlist).collect(),
-            (Tab::Playlists, Drill::Playlist(p)) => self.playlists[p]
+            (Drill::Playlist(p), _) => self.playlists[p]
                 .track_ids
                 .iter()
                 .filter_map(|id| lib.index_of(id))
                 .map(Row::Track)
                 .collect(),
-            (Tab::Search, _) => (0..lib.tracks.len()).map(Row::Track).collect(),
-            (Tab::Queue, _) => self
+            (Drill::Top, Tab::Songs) => tracks().collect(),
+            (Drill::Top, Tab::Albums) => albums().collect(),
+            (Drill::Top, Tab::Artists) => artists().collect(),
+            (Drill::Top, Tab::Playlists) => (0..self.playlists.len()).map(Row::Playlist).collect(),
+            // Search matches everything; the ranker orders the mix.
+            (Drill::Top, Tab::Search) => artists().chain(albums()).chain(tracks()).collect(),
+            (Drill::Top, Tab::Queue) => self
                 .context
                 .upcoming()
                 .iter()
                 .filter_map(|id| lib.index_of(id))
                 .map(Row::Track)
                 .collect(),
-            _ => Vec::new(),
         };
         let query = view.filter.clone();
         if query.trim().is_empty() {
-            // Search shows nothing until something is typed.
-            return if tab == Tab::Search {
+            // Search shows nothing until something is typed; an album or
+            // artist opened from the results lists its tracks regardless.
+            return if tab == Tab::Search && view.drill == Drill::Top {
                 Vec::new()
             } else {
                 unfiltered

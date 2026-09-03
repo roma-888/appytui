@@ -28,7 +28,65 @@ pub fn draw(frame: &mut Frame, app: &mut App, p: &Palette, area: Rect) {
     let current = app.status.track_id.clone();
     let lib = app.library.as_ref().expect("checked above");
 
+    let mixed = app.tab == Tab::Search && app.view().drill == Drill::Top;
     let (header, widths, body): (Vec<&str>, Vec<Constraint>, Vec<TRow>) = match rows.first() {
+        // Search results mix kinds, so each row says what it is.
+        Some(_) if mixed => (
+            vec!["", "Name", "Artist / Album", "Len"],
+            vec![
+                Constraint::Length(7),
+                Constraint::Percentage(45),
+                Constraint::Percentage(40),
+                Constraint::Length(6),
+            ],
+            rows.iter()
+                .map(|r| match r {
+                    Row::Track(i) => {
+                        let t = &lib.tracks[*i];
+                        let playing = current.as_ref() == Some(&t.id);
+                        let mark = if playing { "▶ " } else { "" };
+                        let row = TRow::new(vec![
+                            "song".to_string(),
+                            format!("{mark}{}", t.name),
+                            format!("{} — {}", t.artist, t.album),
+                            fmt_duration(t.duration_secs),
+                        ]);
+                        if playing {
+                            row.style(Style::default().fg(p.highlight))
+                        } else {
+                            row
+                        }
+                    }
+                    Row::Album(i) => {
+                        let a = &lib.albums[*i];
+                        TRow::new(vec![
+                            "album".to_string(),
+                            a.album.clone(),
+                            a.artist.clone(),
+                            format!("{:>3} ♪", a.tracks.len()),
+                        ])
+                    }
+                    Row::Artist(i) => {
+                        let a = &lib.artists[*i];
+                        TRow::new(vec![
+                            "artist".to_string(),
+                            a.name.clone(),
+                            String::new(),
+                            format!("{:>3} ♪", a.tracks.len()),
+                        ])
+                    }
+                    Row::Playlist(i) => {
+                        let pl = &app.playlists[*i];
+                        TRow::new(vec![
+                            "list".to_string(),
+                            pl.name.clone(),
+                            String::new(),
+                            format!("{:>3} ♪", pl.track_ids.len()),
+                        ])
+                    }
+                })
+                .collect(),
+        ),
         Some(Row::Track(_)) | None => (
             vec!["Title", "Artist", "Album", "Len"],
             vec![
@@ -148,11 +206,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, p: &Palette, area: Rect) {
 fn pane_title(app: &App) -> String {
     let lib = app.library.as_ref();
     let name = match (app.tab, app.view().drill, lib) {
-        (Tab::Albums, Drill::Album(a), Some(l)) => {
+        (_, Drill::Album(a), Some(l)) => {
             format!("{} — {}", l.albums[a].artist, l.albums[a].album)
         }
-        (Tab::Artists, Drill::Artist(a), Some(l)) => l.artists[a].name.clone(),
-        (Tab::Playlists, Drill::Playlist(pl), _) => app.playlists[pl].name.clone(),
+        (_, Drill::Artist(a), Some(l)) => l.artists[a].name.clone(),
+        (_, Drill::Playlist(pl), _) => app.playlists[pl].name.clone(),
         (Tab::Queue, _, _) if app.status.shuffle => "Queue (shuffle on: order unknown)".to_string(),
         (tab, _, _) => tab.title().to_string(),
     };

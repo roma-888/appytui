@@ -78,6 +78,7 @@ mod tests {
     use crate::music::model::{PlayerState, PlayerStatus, TrackId};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     fn render(app: &mut App) -> String {
         let mut term = Terminal::new(TestBackend::new(100, 30)).unwrap();
@@ -91,6 +92,44 @@ mod tests {
             out.push('\n');
         }
         out
+    }
+
+    #[test]
+    fn search_results_render_albums_artists_and_songs_together() {
+        let mut app = App::new(
+            Theme::builtin("catppuccin-mocha").unwrap(),
+            VizSettings::default(),
+            false,
+        );
+        reduce(
+            &mut app,
+            Action::Bridge(Event::Library(vec![
+                track("1", "Alpha Song", "Ann", "Album A"),
+                track("2", "Beta Song", "Ann", "Album A"),
+            ])),
+        );
+        reduce(
+            &mut app,
+            Action::Key(KeyEvent::new(KeyCode::Char('5'), KeyModifiers::NONE)),
+        );
+        for c in "ann".chars() {
+            reduce(
+                &mut app,
+                Action::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)),
+            );
+        }
+        let text = render(&mut app);
+        for want in [
+            "artist",
+            "album",
+            "song",
+            "Ann",
+            "Album A",
+            "Alpha Song",
+            "Beta Song",
+        ] {
+            assert!(text.contains(want), "missing {want:?} in\n{text}");
+        }
     }
 
     #[test]

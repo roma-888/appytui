@@ -194,7 +194,11 @@ Albums are grouped by `(album_artist or artist, album)` and artists by
 case-insensitive with a leading "The " ignored.
 
 Filtering uses `nucleo-matcher` over `"name artist album"` for the current
-list. The filter is per tab and cleared with `Esc`.
+list. The filter is per tab and cleared with `Esc`. The Search tab ranks
+artists, albums and tracks together and renders each row with its kind; it
+shows nothing until something is typed. Enter on an album or artist row opens
+it on any tab (an opened collection lists its tracks whatever the tab), and
+Backspace restores the parent list's cursor and filter.
 
 ## 7. Queue and play context
 
