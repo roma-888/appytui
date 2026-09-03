@@ -152,10 +152,11 @@ pub fn switch_now(app: &mut App) -> Vec<Effect> {
     if len == 0 {
         return Vec::new();
     }
-    app.switching_from = app.status.track_id.take();
     app.context.index = (app.context.index + 1) % len;
     let now = Instant::now();
-    app.status.track_id = Some(app.context.track_ids[app.context.index].clone());
+    let next = app.context.track_ids[app.context.index].clone();
+    app.expecting = Some((next.clone(), now));
+    app.status.track_id = Some(next);
     app.status.position_secs = 0.0;
     app.status_at = now;
     app.optimistic_at = Some(now);
@@ -250,7 +251,6 @@ pub fn play_list(app: &mut App, list: Vec<TrackId>, index: usize) -> Vec<Effect>
     };
     app.context = PlayContext::new(ids.clone(), 0);
     app.pending_requeue = false;
-    app.switching_from = None;
     app.invalidate_rows();
     // Filling the playlist takes up to a second; show the chosen track now and
     // let the next status poll correct anything.
@@ -261,9 +261,12 @@ pub fn play_list(app: &mut App, list: Vec<TrackId>, index: usize) -> Vec<Effect>
         .and_then(|l| l.get(&first))
         .map(|t| t.name.clone())
         .unwrap_or_default();
+    let now = Instant::now();
+    app.expecting = Some((first.clone(), now));
     app.status.track_id = Some(first);
     app.status.position_secs = 0.0;
-    app.status_at = Instant::now();
+    app.status_at = now;
+    app.optimistic_at = Some(now);
     app.notify(format!("Starting {name}…"));
     let mut effects = vec![Effect::Send(Command::PlayTracks(ids))];
     effects.extend(set_playing(app, true));
@@ -506,6 +509,8 @@ mod tests {
         reduce(&mut a, code(KeyCode::Enter));
         reduce(&mut a, code(KeyCode::Enter));
         assert_eq!(a.context.track_ids, vec![id(1), id(2)]);
+        // Music.app confirms the play, so later polls are believed.
+        poll(&mut a, PlayerState::Playing, 0.5, "1");
         reduce(&mut a, key('1'));
         reduce(&mut a, key('G'));
         a
@@ -550,6 +555,54 @@ mod tests {
         let fx = poll(&mut a, PlayerState::Stopped, 0.0, "1");
         assert!(fx.contains(&Effect::Send(Command::PlayPrepared)), "{fx:?}");
         assert!(fx.contains(&Effect::Viz(Control::Playing(true))), "{fx:?}");
+    }
+
+    #[test]
+    fn stale_poll_of_the_old_track_after_enter_is_ignored_until_music_confirms() {
+        let mut a = playing_app(10.0, 1);
+        reduce(&mut a, key('j'));
+        reduce(&mut a, code(KeyCode::Enter));
+        assert_eq!(a.status.track_id, Some(id(2)));
+        // Taken before Music.app switched: still the old track.
+        poll(&mut a, PlayerState::Playing, 11.2, "1");
+        assert_eq!(a.status.track_id, Some(id(2)));
+        assert_eq!(a.status.state, PlayerState::Playing);
+        assert_eq!(a.context.index, 0);
+        // Music.app confirms; from then on polls are believed again.
+        poll(&mut a, PlayerState::Playing, 0.4, "2");
+        assert_eq!(a.status.track_id, Some(id(2)));
+        poll(&mut a, PlayerState::Playing, 5.0, "1");
+        assert_eq!(a.status.track_id, Some(id(1)));
+    }
+
+    #[test]
+    fn stale_stopped_poll_after_enter_from_stopped_is_ignored() {
+        let mut a = app();
+        reduce(&mut a, key('j'));
+        reduce(&mut a, code(KeyCode::Enter));
+        reduce(
+            &mut a,
+            Action::Bridge(Event::Status(PlayerStatus {
+                state: PlayerState::Stopped,
+                ..PlayerStatus::default()
+            })),
+        );
+        assert_eq!(a.status.track_id, Some(id(2)));
+        assert_eq!(a.status.state, PlayerState::Playing);
+    }
+
+    #[test]
+    fn a_play_error_stops_waiting_for_confirmation() {
+        let mut a = playing_app(10.0, 1);
+        reduce(&mut a, key('j'));
+        reduce(&mut a, code(KeyCode::Enter));
+        reduce(
+            &mut a,
+            Action::Bridge(Event::Error("osascript failed".into())),
+        );
+        poll(&mut a, PlayerState::Paused, 11.0, "1");
+        assert_eq!(a.status.track_id, Some(id(1)));
+        assert_eq!(a.status.state, PlayerState::Paused);
     }
 
     #[test]
@@ -634,6 +687,8 @@ mod tests {
         a.status.track_id = Some(id(1));
         a.status.position_secs = 200.0 - remaining;
         a.status_at = Instant::now();
+        // Well past the play: the optimistic window has closed.
+        a.optimistic_at = None;
         a
     }
 

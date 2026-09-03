@@ -25,6 +25,9 @@ pub const MESSAGE_TTL: Duration = Duration::from_secs(5);
 /// After a volume/shuffle/repeat key, ignore those fields from status polls
 /// that were already in flight, so they cannot undo the optimistic update.
 pub const OPTIMISTIC_WINDOW: Duration = Duration::from_millis(1500);
+/// How long to wait for Music.app to confirm a track the app started before
+/// believing polls again. Filling a long playlist can take a few seconds.
+pub const PLAY_CONFIRM_WINDOW: Duration = Duration::from_secs(10);
 
 pub struct App {
     pub library: Option<Library>,
@@ -64,8 +67,10 @@ pub struct App {
     rows_gen: u64,
     /// The idle playlist holds an edited queue waiting for the track boundary.
     pub pending_requeue: bool,
-    /// Track we just switched away from; polls still naming it are stale.
-    pub switching_from: Option<TrackId>,
+    /// Track the app just asked Music.app to play, and when. Until a poll
+    /// names it (or the wait expires), polls naming anything else predate the
+    /// command and are ignored, so the display does not flip back and forth.
+    pub expecting: Option<(TrackId, Instant)>,
     /// xorshift state for shuffle sampling; avoids a dependency for one use.
     rng: u64,
 }
@@ -109,7 +114,7 @@ impl App {
             rows_cache: None,
             rows_gen: 0,
             pending_requeue: false,
-            switching_from: None,
+            expecting: None,
             rng: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_nanos() as u64)

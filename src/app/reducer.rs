@@ -10,7 +10,7 @@ use super::playback::{
     switch_now, track_ids,
 };
 use super::views::{Drill, Row, Tab};
-use super::{App, MESSAGE_TTL, OPTIMISTIC_WINDOW};
+use super::{App, MESSAGE_TTL, OPTIMISTIC_WINDOW, PLAY_CONFIRM_WINDOW};
 use crate::art::{ArtRequest, ArtResult};
 use crate::config::Orientation;
 use crate::music::model::PlayerState;
@@ -91,12 +91,13 @@ fn on_bridge(app: &mut App, ev: Event) -> Vec<Effect> {
             let optimistic = app
                 .optimistic_at
                 .is_some_and(|t| t.elapsed() < OPTIMISTIC_WINDOW);
-            // A poll taken before a queue switch still names the old track.
-            if let Some(from) = &app.switching_from {
-                if optimistic && s.track_id.as_ref() == Some(from) {
+            // Until Music.app reports the track the app just started, polls
+            // naming anything else were taken before the command landed.
+            if let Some((expected, since)) = &app.expecting {
+                if since.elapsed() < PLAY_CONFIRM_WINDOW && s.track_id.as_ref() != Some(expected) {
                     return Vec::new();
                 }
-                app.switching_from = None;
+                app.expecting = None;
             }
             let previous_track = app.status.track_id.clone();
             let was_playing = app.status.state == PlayerState::Playing;
@@ -147,7 +148,11 @@ fn on_bridge(app: &mut App, ev: Event) -> Vec<Effect> {
             app.music_pid = Some(pid);
             return vec![Effect::Viz(Control::MusicPid(pid))];
         }
-        Event::Error(e) => app.notify(e),
+        Event::Error(e) => {
+            // A failed play never gets confirmed; believe the polls again.
+            app.expecting = None;
+            app.notify(e)
+        }
     }
     Vec::new()
 }
@@ -447,6 +452,7 @@ mod tests {
     fn status_event_resyncs_context_and_records_time() {
         let mut a = app();
         reduce(&mut a, code(KeyCode::Enter));
+        poll(&mut a, PlayerState::Playing, 0.5, "1");
         let before = a.status_at;
         reduce(
             &mut a,
